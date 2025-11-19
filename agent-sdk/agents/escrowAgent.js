@@ -1,0 +1,733 @@
+/**
+ * EscrowAgent - A2A Protocol Compliant (Enhanced)
+ * Automated escrow operations, milestone management, and auto-release
+ * Based on: https://github.com/a2aproject/A2A
+ */
+
+const express = require('express');
+const { ethers } = require('ethers');
+const { connect, StringCodec } = require('nats');
+require('dotenv').config();
+
+const app = express();
+app.use(express.json());
+
+// CORS middleware
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+const PORT = process.env.ESCROW_AGENT_PORT || 3007;
+const sc = StringCodec();
+
+// A2A Agent Card - Protocol Compliance
+const AGENT_CARD = {
+  name: 'EscrowAgent',
+  version: '2.0.0',
+  description: 'A2A-compliant enhanced escrow agent with automated operations and milestone management',
+  capabilities: [
+    'escrow.create',
+    'escrow.fund',
+    'escrow.release',
+    'escrow.refund',
+    'escrow.milestone.complete',
+    'escrow.auto_release',
+    'escrow.multi_party'
+  ],
+  methods: {
+    'escrow.create': {
+      description: 'Create a new escrow',
+      params: {
+        jobId: 'string',
+        client: 'address',
+        worker: 'address',
+        amount: 'number',
+        milestones: 'array (optional)'
+      }
+    },
+    'escrow.release': {
+      description: 'Release escrowed funds to worker',
+      params: {
+        escrowId: 'string',
+        amount: 'number (optional - for partial release)'
+      }
+    },
+    'escrow.auto_release': {
+      description: 'Automatically release funds based on verification',
+      params: {
+        escrowId: 'string',
+        verificationProof: 'string'
+      }
+    },
+    'escrow.milestone.complete': {
+      description: 'Mark milestone as complete and release funds',
+      params: {
+        escrowId: 'string',
+        milestoneIndex: 'number'
+      }
+    }
+  },
+  transport: 'http',
+  endpoint: `http://localhost:${PORT}`,
+  protocols: ['A2A/1.0', 'JSON-RPC/2.0']
+};
+
+// Hedera connection
+const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_JSON_RPC_RELAY);
+const wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY, provider);
+
+// Contract connections
+let escrowManagerContract;
+let milestoneEscrowContract;
+
+// In-memory escrow tracking
+const escrows = new Map();
+const milestones = new Map();
+const autoReleaseQueue = new Map();
+
+// Escrow status
+const EscrowStatus = {
+  CREATED: 'created',
+  FUNDED: 'funded',
+  IN_PROGRESS: 'in_progress',
+  COMPLETED: 'completed',
+  REFUNDED: 'refunded',
+  DISPUTED: 'disputed'
+};
+
+// NATS connection
+let nc;
+
+async function initContracts() {
+  try {
+    // Standard EscrowManager
+    const escrowManagerABI = [
+      'function createEscrow(address worker, string description) external payable returns (uint256)',
+      'function releasePayment(uint256 escrowId) external',
+      'function refund(uint256 escrowId) external',
+      'function getEscrow(uint256 escrowId) external view returns (tuple(address client, address worker, uint256 amount, bool completed, bool refunded))',
+      'event EscrowCreated(uint256 indexed escrowId, address indexed client, address indexed worker, uint256 amount)',
+      'event PaymentReleased(uint256 indexed escrowId, address indexed worker, uint256 amount)',
+      'event PaymentRefunded(uint256 indexed escrowId, address indexed client, uint256 amount)'
+    ];
+
+    escrowManagerContract = new ethers.Contract(
+      process.env.ESCROW_MANAGER_ADDRESS,
+      escrowManagerABI,
+      wallet
+    );
+
+    // MilestoneEscrow (new)
+    const milestoneEscrowABI = [
+      'function createEscrow(bytes32 escrowId, address freelancer, string[] titles, string[] descriptions, uint256[] amounts, uint256[] deadlines) external payable',
+      'function completeMilestone(bytes32 escrowId, uint256 milestoneIndex) external',
+      'function approveMilestone(bytes32 escrowId, uint256 milestoneIndex) external',
+      'function releaseMilestone(bytes32 escrowId, uint256 milestoneIndex) external',
+      'function getEscrow(bytes32 escrowId) external view returns (tuple(address client, address freelancer, uint256 totalAmount, uint256 releasedAmount, bool completed))',
+      'function getMilestone(bytes32 escrowId, uint256 index) external view returns (tuple(string title, string description, uint256 amount, uint256 deadline, bool completed, bool approved, bool released))'
+    ];
+
+    milestoneEscrowContract = new ethers.Contract(
+      process.env.MILESTONE_ESCROW_ADDRESS,
+      milestoneEscrowABI,
+      wallet
+    );
+
+    console.log('✅ Escrow contracts initialized');
+  } catch (error) {
+    console.error('❌ Contract initialization error:', error.message);
+  }
+}
+
+async function initNATS() {
+  try {
+    nc = await connect({ servers: process.env.NATS_URL || 'nats://localhost:4222' });
+    console.log('✅ Connected to NATS server');
+
+    // Subscribe to A2A channels
+    const escrow_requests = nc.subscribe('aexowork.escrow.requests');
+    const escrow_created = nc.subscribe('aexowork.escrow.created'); // Track escrows created by ClientAgent
+    const verification_complete = nc.subscribe('aexowork.verification.complete');
+    const milestone_complete = nc.subscribe('aexowork.milestone.complete');
+
+    // Handle escrow requests
+    (async () => {
+      for await (const msg of escrow_requests) {
+        try {
+          const data = JSON.parse(sc.decode(msg.data));
+          console.log('[A2A] Escrow request received:', data.jobId);
+          await handleEscrowRequest(data, msg);
+        } catch (error) {
+          console.error('[A2A] Escrow request handling error:', error);
+        }
+      }
+    })();
+
+    // Handle escrow created notifications (from ClientAgent)
+    (async () => {
+      for await (const msg of escrow_created) {
+        try {
+          const data = JSON.parse(sc.decode(msg.data));
+          console.log('[A2A] Escrow created notification:', data.escrowId);
+          
+          // Store escrow info for tracking
+          const escrow = {
+            id: data.escrowId,
+            jobId: data.jobId,
+            client: data.client,
+            worker: data.worker,
+            amount: data.amount,
+            description: `Job: ${data.jobId}`,
+            status: EscrowStatus.FUNDED,
+            autoRelease: data.autoRelease || false,
+            createdAt: data.timestamp || Date.now(),
+            onChainTx: data.onChainTx
+          };
+          
+          escrows.set(data.escrowId, escrow);
+          
+          // Add to auto-release queue if enabled
+          if (data.autoRelease) {
+            autoReleaseQueue.set(data.escrowId, {
+              escrowId: data.escrowId,
+              awaitingVerification: true
+            });
+          }
+          
+          console.log(`✅ Escrow tracked: ${data.escrowId} - ${data.amount} HBAR`);
+        } catch (error) {
+          console.error('[A2A] Escrow created notification error:', error);
+        }
+      }
+    })();
+
+    // Handle verification completion (auto-release trigger)
+    (async () => {
+      for await (const msg of verification_complete) {
+        try {
+          const data = JSON.parse(sc.decode(msg.data));
+          console.log('[A2A] Verification complete:', data.escrowId);
+          await handleAutoRelease(data);
+        } catch (error) {
+          console.error('[A2A] Auto-release error:', error);
+        }
+      }
+    })();
+
+    // Handle milestone completion
+    (async () => {
+      for await (const msg of milestone_complete) {
+        try {
+          const data = JSON.parse(sc.decode(msg.data));
+          console.log('[A2A] Milestone complete:', data.escrowId, data.milestoneIndex);
+          await handleMilestoneCompletion(data);
+        } catch (error) {
+          console.error('[A2A] Milestone handling error:', error);
+        }
+      }
+    })();
+
+    console.log('[A2A] Subscribed to escrow channels');
+  } catch (error) {
+    console.error('❌ NATS connection failed:', error.message);
+  }
+}
+
+// A2A Protocol: Health check & Agent Card
+app.get('/', (req, res) => {
+  res.json({
+    status: 'running',
+    agent: 'EscrowAgent',
+    protocol: 'A2A/2.0',
+    version: '2.0.0',
+    agentCard: AGENT_CARD,
+    stats: {
+      totalEscrows: escrows.size,
+      active: Array.from(escrows.values()).filter(e => e.status === EscrowStatus.IN_PROGRESS).length,
+      completed: Array.from(escrows.values()).filter(e => e.status === EscrowStatus.COMPLETED).length,
+      totalValue: Array.from(escrows.values()).reduce((sum, e) => sum + parseFloat(e.amount), 0),
+      autoReleaseQueue: autoReleaseQueue.size
+    },
+    contracts: {
+      escrowManager: process.env.ESCROW_MANAGER_ADDRESS,
+      milestoneEscrow: process.env.MILESTONE_ESCROW_ADDRESS
+    }
+  });
+});
+
+// A2A Protocol: Get Agent Card
+app.get('/agent-card', (req, res) => {
+  res.json(AGENT_CARD);
+});
+
+// Create standard escrow (A2A method: escrow.create)
+app.post(['/create-escrow', '/api/escrow/create'], async (req, res) => {
+  try {
+    const { jobId, client, worker, amount, description, autoRelease } = req.body;
+
+    const amountWei = ethers.utils.parseEther(amount.toString());
+
+    // Create on-chain escrow
+    const tx = await escrowManagerContract.createEscrow(worker, description || `Job ${jobId}`, {
+      value: amountWei
+    });
+
+    const receipt = await tx.wait();
+
+    // Extract escrow ID from events
+    let escrowId;
+    const escrowCreatedEvent = receipt.events?.find(e => e.event === 'EscrowCreated');
+    if (escrowCreatedEvent) {
+      escrowId = escrowCreatedEvent.args.escrowId.toNumber();
+    } else {
+      escrowId = `escrow_${Date.now()}`;
+    }
+
+    // Store escrow info
+    const escrow = {
+      id: escrowId,
+      jobId,
+      client: client || wallet.address,
+      worker,
+      amount,
+      description,
+      status: EscrowStatus.FUNDED,
+      autoRelease: autoRelease || false,
+      createdAt: Date.now(),
+      onChainTx: tx.hash
+    };
+
+    escrows.set(escrowId, escrow);
+
+    // Add to auto-release queue if enabled
+    if (autoRelease) {
+      autoReleaseQueue.set(escrowId, {
+        escrowId,
+        awaitingVerification: true
+      });
+    }
+
+    // A2A: Broadcast escrow creation
+    if (nc) {
+      nc.publish('aexowork.escrow.created', sc.encode(JSON.stringify({
+        type: 'escrow.created',
+        escrowId,
+        jobId,
+        client: escrow.client,
+        worker,
+        amount,
+        autoRelease,
+        timestamp: Date.now()
+      })));
+    }
+
+    console.log(`✅ Escrow created: ${escrowId} - ${amount} HBAR`);
+
+    res.json({
+      success: true,
+      escrowId,
+      amount,
+      status: escrow.status,
+      autoRelease,
+      onChainTx: tx.hash,
+      message: 'Escrow created and funded'
+    });
+  } catch (error) {
+    console.error('❌ Error creating escrow:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create milestone-based escrow (A2A method: escrow.create with milestones)
+app.post(['/create-milestone-escrow', '/api/escrow/milestone/create'], async (req, res) => {
+  try {
+    const { jobId, client, freelancer, milestones: milestonesData } = req.body;
+
+    // Generate escrow ID
+    const escrowId = ethers.utils.id(`escrow_${jobId}_${Date.now()}`);
+
+    // Parse milestones
+    const titles = milestonesData.map(m => m.title);
+    const descriptions = milestonesData.map(m => m.description);
+    const amounts = milestonesData.map(m => ethers.utils.parseEther(m.amount.toString()));
+    const deadlines = milestonesData.map(m => Math.floor(m.deadline / 1000)); // Convert to seconds
+
+    const totalAmount = amounts.reduce((sum, amt) => sum.add(amt), ethers.BigNumber.from(0));
+
+    // Create on-chain milestone escrow
+    const tx = await milestoneEscrowContract.createEscrow(
+      escrowId,
+      freelancer,
+      titles,
+      descriptions,
+      amounts,
+      deadlines,
+      { 
+        value: totalAmount,
+        gasLimit: 1000000
+      }
+    );
+
+    await tx.wait();
+
+    // Store escrow info
+    const escrow = {
+      id: escrowId,
+      jobId,
+      client: client || wallet.address,
+      freelancer,
+      totalAmount: ethers.utils.formatEther(totalAmount),
+      milestonesCount: milestonesData.length,
+      status: EscrowStatus.IN_PROGRESS,
+      createdAt: Date.now(),
+      onChainTx: tx.hash
+    };
+
+    escrows.set(escrowId, escrow);
+
+    // Store milestones
+    milestones.set(escrowId, milestonesData.map((m, idx) => ({
+      index: idx,
+      title: m.title,
+      description: m.description,
+      amount: m.amount,
+      deadline: m.deadline,
+      completed: false,
+      approved: false,
+      released: false
+    })));
+
+    // A2A: Broadcast milestone escrow creation
+    if (nc) {
+      nc.publish('aexowork.escrow.created', sc.encode(JSON.stringify({
+        type: 'escrow.milestone.created',
+        escrowId,
+        jobId,
+        client: escrow.client,
+        freelancer,
+        totalAmount: escrow.totalAmount,
+        milestonesCount: milestonesData.length,
+        timestamp: Date.now()
+      })));
+    }
+
+    console.log(`✅ Milestone escrow created: ${escrowId} - ${escrow.totalAmount} HBAR`);
+
+    res.json({
+      success: true,
+      escrowId,
+      totalAmount: escrow.totalAmount,
+      milestonesCount: milestonesData.length,
+      status: escrow.status,
+      onChainTx: tx.hash,
+      message: 'Milestone escrow created'
+    });
+  } catch (error) {
+    console.error('❌ Error creating milestone escrow:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Release payment (A2A method: escrow.release)
+app.post(['/release', '/api/escrow/release'], async (req, res) => {
+  try {
+    const { escrowId } = req.body;
+
+    const escrow = escrows.get(parseInt(escrowId));
+    if (!escrow) {
+      return res.status(404).json({ error: 'Escrow not found' });
+    }
+
+    // Release on-chain
+    const tx = await escrowManagerContract.releasePayment(escrowId);
+    await tx.wait();
+
+    // Update status
+    escrow.status = EscrowStatus.COMPLETED;
+    escrow.releasedAt = Date.now();
+    escrows.set(parseInt(escrowId), escrow);
+
+    // Remove from auto-release queue
+    autoReleaseQueue.delete(escrowId);
+
+    // A2A: Broadcast release
+    if (nc) {
+      nc.publish('aexowork.escrow.released', sc.encode(JSON.stringify({
+        type: 'escrow.released',
+        escrowId,
+        worker: escrow.worker,
+        amount: escrow.amount,
+        timestamp: Date.now()
+      })));
+    }
+
+    console.log(`✅ Escrow released: ${escrowId} to ${escrow.worker}`);
+
+    res.json({
+      success: true,
+      escrowId,
+      status: escrow.status,
+      worker: escrow.worker,
+      amount: escrow.amount,
+      message: 'Payment released to worker'
+    });
+  } catch (error) {
+    console.error('❌ Error releasing escrow:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Complete milestone (A2A method: escrow.milestone.complete)
+app.post(['/milestone/complete', '/api/escrow/milestone/complete'], async (req, res) => {
+  try {
+    const { escrowId, milestoneIndex } = req.body;
+
+    // Complete on-chain
+    const tx = await milestoneEscrowContract.completeMilestone(escrowId, milestoneIndex, {
+      gasLimit: 500000
+    });
+    await tx.wait();
+
+    // Update local milestone
+    const escrowMilestones = milestones.get(escrowId);
+    if (escrowMilestones && escrowMilestones[milestoneIndex]) {
+      escrowMilestones[milestoneIndex].completed = true;
+      milestones.set(escrowId, escrowMilestones);
+    }
+
+    console.log(`✅ Milestone completed: ${escrowId} - Milestone ${milestoneIndex}`);
+
+    res.json({
+      success: true,
+      escrowId,
+      milestoneIndex,
+      message: 'Milestone marked as complete'
+    });
+  } catch (error) {
+    console.error('❌ Error completing milestone:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Approve and release milestone
+app.post(['/milestone/approve', '/api/escrow/milestone/approve'], async (req, res) => {
+  try {
+    const { escrowId, milestoneIndex } = req.body;
+
+    // Approve on-chain
+    const tx = await milestoneEscrowContract.approveMilestone(escrowId, milestoneIndex, {
+      gasLimit: 500000
+    });
+    await tx.wait();
+
+    // Update local milestone
+    const escrowMilestones = milestones.get(escrowId);
+    if (escrowMilestones && escrowMilestones[milestoneIndex]) {
+      escrowMilestones[milestoneIndex].approved = true;
+      escrowMilestones[milestoneIndex].released = true;
+      milestones.set(escrowId, escrowMilestones);
+    }
+
+    // A2A: Broadcast milestone release
+    if (nc) {
+      nc.publish('aexowork.milestone.released', sc.encode(JSON.stringify({
+        type: 'milestone.released',
+        escrowId,
+        milestoneIndex,
+        timestamp: Date.now()
+      })));
+    }
+
+    console.log(`✅ Milestone approved & released: ${escrowId} - Milestone ${milestoneIndex}`);
+
+    res.json({
+      success: true,
+      escrowId,
+      milestoneIndex,
+      message: 'Milestone approved and payment released'
+    });
+  } catch (error) {
+    console.error('❌ Error approving milestone:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get escrow details
+app.get(['/escrow/:escrowId', '/api/escrow/:escrowId'], (req, res) => {
+  const { escrowId } = req.params;
+  const escrow = escrows.get(parseInt(escrowId)) || escrows.get(escrowId);
+
+  if (!escrow) {
+    return res.status(404).json({ error: 'Escrow not found' });
+  }
+
+  const escrowMilestones = milestones.get(escrowId);
+
+  res.json({
+    escrow,
+    milestones: escrowMilestones || null
+  });
+});
+
+// List all escrows
+app.get(['/escrows', '/api/escrows'], (req, res) => {
+  const { status, client, worker } = req.query;
+
+  let escrowList = Array.from(escrows.values());
+
+  if (status) {
+    escrowList = escrowList.filter(e => e.status === status);
+  }
+
+  if (client) {
+    escrowList = escrowList.filter(e => e.client.toLowerCase() === client.toLowerCase());
+  }
+
+  if (worker) {
+    escrowList = escrowList.filter(e => e.worker && e.worker.toLowerCase() === worker.toLowerCase());
+  }
+
+  res.json({
+    total: escrowList.length,
+    escrows: escrowList
+  });
+});
+
+// A2A: Handle escrow request from another agent
+async function handleEscrowRequest(data, msg) {
+  const { jobId, client, worker, amount, autoRelease } = data;
+
+  try {
+    // Auto-create escrow
+    // Handle amount conversion - ensure it's a valid number string
+    let amountWei;
+    if (typeof amount === 'string' && amount.includes('e')) {
+      // Handle scientific notation by converting to fixed decimal
+      const numAmount = parseFloat(amount);
+      amountWei = ethers.utils.parseEther(numAmount.toFixed(18));
+    } else {
+      // Normal number string
+      const numAmount = typeof amount === 'number' ? amount : parseFloat(amount);
+      if (isNaN(numAmount) || numAmount <= 0) {
+        throw new Error(`Invalid amount: ${amount}`);
+      }
+      amountWei = ethers.utils.parseEther(numAmount.toString());
+    }
+    
+    const tx = await escrowManagerContract.createEscrow(worker, `Job ${jobId}`, {
+      value: amountWei
+    });
+
+    const receipt = await tx.wait();
+    let escrowId = `escrow_${Date.now()}`;
+
+    const escrowCreatedEvent = receipt.events?.find(e => e.event === 'EscrowCreated');
+    if (escrowCreatedEvent) {
+      escrowId = escrowCreatedEvent.args.escrowId.toNumber();
+    }
+
+    // Reply with A2A message
+    if (msg.reply) {
+      const response = {
+        type: 'escrow.created',
+        escrowId,
+        success: true,
+        amount,
+        timestamp: Date.now()
+      };
+      nc.publish(msg.reply, sc.encode(JSON.stringify(response)));
+    }
+
+    console.log(`✅ A2A escrow created: ${escrowId}`);
+  } catch (error) {
+    console.error('❌ A2A escrow creation failed:', error);
+  }
+}
+
+// A2A: Handle auto-release based on verification
+async function handleAutoRelease(data) {
+  const { escrowId, passed, score } = data;
+
+  const autoRelease = autoReleaseQueue.get(escrowId);
+  if (!autoRelease) {
+    console.log(`⚠️ Escrow ${escrowId} not in auto-release queue`);
+    return;
+  }
+
+  if (!passed || score < 70) {
+    console.log(`⚠️ Verification failed for escrow ${escrowId}. Manual review required.`);
+    return;
+  }
+
+  // Auto-release payment
+  try {
+    const tx = await escrowManagerContract.releasePayment(escrowId);
+    await tx.wait();
+
+    const escrow = escrows.get(parseInt(escrowId));
+    if (escrow) {
+      escrow.status = EscrowStatus.COMPLETED;
+      escrow.releasedAt = Date.now();
+      escrows.set(parseInt(escrowId), escrow);
+    }
+
+    autoReleaseQueue.delete(escrowId);
+
+    console.log(`✅ Auto-released escrow: ${escrowId}`);
+
+    // A2A: Broadcast auto-release
+    if (nc) {
+      nc.publish('aexowork.escrow.auto_released', sc.encode(JSON.stringify({
+        type: 'escrow.auto_released',
+        escrowId,
+        score,
+        timestamp: Date.now()
+      })));
+    }
+  } catch (error) {
+    console.error(`❌ Auto-release failed for ${escrowId}:`, error);
+  }
+}
+
+// A2A: Handle milestone completion
+async function handleMilestoneCompletion(data) {
+  const { escrowId, milestoneIndex } = data;
+
+  try {
+    const tx = await milestoneEscrowContract.completeMilestone(escrowId, milestoneIndex, {
+      gasLimit: 500000
+    });
+    await tx.wait();
+
+    console.log(`✅ A2A milestone completed: ${escrowId} - Milestone ${milestoneIndex}`);
+  } catch (error) {
+    console.error('❌ A2A milestone completion failed:', error);
+  }
+}
+
+// Start server
+async function start() {
+  await initContracts();
+  await initNATS();
+
+  app.listen(PORT, () => {
+    console.log(`\n╔════════════════════════════════════════╗`);
+    console.log(`║   EscrowAgent (A2A Protocol v2.0)      ║`);
+    console.log(`╚════════════════════════════════════════╝`);
+    console.log(`✅ Running on port ${PORT}`);
+    console.log(`📡 A2A Protocol: v2.0`);
+    console.log(`🔗 Endpoint: http://localhost:${PORT}`);
+    console.log(`📄 Agent Card: http://localhost:${PORT}/agent-card\n`);
+  });
+}
+
+start().catch(console.error);
+
+module.exports = { app, AGENT_CARD };
+
