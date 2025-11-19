@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const express = require('express');
 const { ethers } = require('ethers');
 const { signJSON } = require('../lib/signer');
@@ -45,7 +45,7 @@ app.get('/', (req, res) => {
     stats: {
       availableJobs: availableJobs.size,
       acceptedWork: acceptedWork.size,
-      skills: process.env.AGENT_SKILLS || 'writing,design,coding'
+      skills: process.env.AGENT_SKILLS || 'writing,design,coding,UIUX,Figma,Framer,React,SQL'
     },
     contracts: {
       escrowManager: process.env.ESCROW_MANAGER_ADDRESS
@@ -60,7 +60,7 @@ app.get('/', (req, res) => {
  */
 function shouldBidOnJob(job) {
   // Simple logic: check if we have required skills
-  const mySkills = (process.env.AGENT_SKILLS || 'writing,design,coding').split(',');
+  const mySkills = (process.env.AGENT_SKILLS || 'writing,design,coding,UIUX,Figma,Framer,React,SQL').split(',');
   
   if (!job.requiredSkills || job.requiredSkills.length === 0) {
     return true; // No specific requirements
