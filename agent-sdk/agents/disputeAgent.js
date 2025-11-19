@@ -6,7 +6,7 @@
 
 const express = require('express');
 const { ethers } = require('ethers');
-const { connect, StringCodec } = require('nats');
+const { sendA2A, subscribe, init: initA2A } = require('../lib/a2a');
 require('dotenv').config();
 
 const app = express();
@@ -24,7 +24,7 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.DISPUTE_AGENT_PORT || 3005;
-const sc = StringCodec();
+let sc = null; // Will be initialized in initNATS
 
 // A2A Agent Card - Protocol Compliance
 const AGENT_CARD = {
@@ -77,8 +77,13 @@ const AGENT_CARD = {
 };
 
 // Hedera connection
-const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_JSON_RPC_RELAY);
-const wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY, provider);
+const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_JSON_RPC_RELAY || process.env.HEDERA_RPC_URL || 'https://testnet.hashio.io/api');
+let wallet = null;
+if (process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY) {
+  wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY, provider);
+} else {
+  console.warn('[DisputeAgent] No private key found. Wallet operations will be limited.');
+}
 
 // Contract connections
 let arbitrationContract;
@@ -113,27 +118,40 @@ let nc;
 async function initContracts() {
   try {
     // Arbitration contract
+    const arbitrationAddress = process.env.ARBITRATION_ADDRESS;
+    if (!arbitrationAddress) {
+      console.warn('[DisputeAgent] ARBITRATION_ADDRESS not set. Contract operations will be limited.');
+      return;
+    }
+    
     const arbitrationABI = [
       'function raiseDispute(uint256 escrowId, string reason) external returns (uint256)',
       'function resolveDispute(uint256 disputeId, bool favorClient) external',
       'function getDispute(uint256 disputeId) external view returns (tuple(uint256 escrowId, address client, address worker, bool resolved, bool favorClient))'
     ];
+    
+    // Use provider if wallet is null (read-only)
+    const signerOrProvider = wallet || provider;
     arbitrationContract = new ethers.Contract(
-      process.env.ARBITRATION_ADDRESS,
+      arbitrationAddress,
       arbitrationABI,
-      wallet
+      signerOrProvider
     );
+    console.log('✅ Arbitration contract initialized');
 
     // Reputation contract
-    const reputationABI = [
-      'function getReputation(address agent) external view returns (uint256)',
-      'function updateReputation(address agent, int256 change) external'
-    ];
-    reputationContract = new ethers.Contract(
-      process.env.REPUTATION_MANAGER_ADDRESS,
-      reputationABI,
-      wallet
-    );
+    const reputationAddress = process.env.REPUTATION_MANAGER_ADDRESS;
+    if (reputationAddress) {
+      const reputationABI = [
+        'function getReputation(address agent) external view returns (uint256)',
+        'function updateReputation(address agent, int256 change) external'
+      ];
+      reputationContract = new ethers.Contract(
+        reputationAddress,
+        reputationABI,
+        signerOrProvider
+      );
+    }
 
     // Escrow contract
     const escrowABI = [
@@ -155,8 +173,10 @@ async function initContracts() {
 
 async function initNATS() {
   try {
-    nc = await connect({ servers: process.env.NATS_URL || 'nats://localhost:4222' });
-    console.log('✅ Connected to NATS server');
+    await initA2A(process.env.NATS_URL || 'nats://localhost:4222');
+    nc = getConnection();
+    sc = StringCodec();
+    console.log('✅ Connected to NATS server via A2A library');
 
     // Subscribe to A2A channels
     const disputes_sub = nc.subscribe('aexowork.disputes');

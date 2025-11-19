@@ -4,10 +4,11 @@
  * Based on: https://github.com/a2aproject/A2A
  */
 
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const express = require('express');
 const { ethers } = require('ethers');
-const { connect, StringCodec } = require('nats');
-require('dotenv').config();
+const { sendA2A, subscribe, init: initA2A, getConnection } = require('../lib/a2a');
+const { StringCodec } = require('nats');
 
 const app = express();
 app.use(express.json());
@@ -24,7 +25,7 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.DATA_AGENT_PORT || 3006;
-const sc = StringCodec();
+let sc = null; // Will be initialized in initNATS
 
 // A2A Agent Card - Protocol Compliance
 const AGENT_CARD = {
@@ -78,8 +79,13 @@ const AGENT_CARD = {
 };
 
 // Hedera connection
-const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_JSON_RPC_RELAY);
-const wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY, provider);
+const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_JSON_RPC_RELAY || process.env.HEDERA_RPC_URL || 'https://testnet.hashio.io/api');
+let wallet = null;
+if (process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY) {
+  wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY, provider);
+} else {
+  console.warn('[DataAgent] No private key found. Wallet operations will be limited.');
+}
 
 // Contract connection
 let dataMarketplaceContract;
@@ -101,6 +107,12 @@ let nc;
 
 async function initContracts() {
   try {
+    const dataMarketplaceAddress = process.env.DATA_MARKETPLACE_ADDRESS;
+    if (!dataMarketplaceAddress) {
+      console.warn('[DataAgent] DATA_MARKETPLACE_ADDRESS not set. Contract operations will be limited.');
+      return;
+    }
+    
     const dataMarketplaceABI = [
       'function listData(string name, string description, string dataHash, uint8 pricingModel, uint256 price) external returns (uint256)',
       'function purchaseData(uint256 listingId) external payable',
@@ -110,10 +122,12 @@ async function initContracts() {
       'event DataPurchased(uint256 indexed listingId, address indexed buyer, uint256 price)'
     ];
 
+    // Use provider if wallet is null (read-only)
+    const signerOrProvider = wallet || provider;
     dataMarketplaceContract = new ethers.Contract(
-      process.env.DATA_MARKETPLACE_ADDRESS,
+      dataMarketplaceAddress,
       dataMarketplaceABI,
-      wallet
+      signerOrProvider
     );
 
     console.log('✅ DataMarketplace contract initialized');
@@ -124,8 +138,10 @@ async function initContracts() {
 
 async function initNATS() {
   try {
-    nc = await connect({ servers: process.env.NATS_URL || 'nats://localhost:4222' });
-    console.log('✅ Connected to NATS server');
+    await initA2A(process.env.NATS_URL || 'nats://localhost:4222');
+    nc = getConnection();
+    sc = StringCodec();
+    console.log('✅ Connected to NATS server via A2A library');
 
     // Subscribe to A2A channels
     const data_requests = nc.subscribe('aexowork.data.requests');
@@ -225,7 +241,7 @@ app.post(['/register-data', '/api/data/register'], async (req, res) => {
       dataHash,
       pricingModel: model,
       price,
-      provider: provider || wallet.address,
+      provider: provider || (wallet ? wallet.address : '0x0000000000000000000000000000000000000000'),
       active: true,
       totalSales: 0,
       revenue: 0,
@@ -326,7 +342,7 @@ app.post(['/purchase', '/api/data/purchase'], async (req, res) => {
       id: purchaseId,
       listingId,
       datasetName: listing.name,
-      buyer: buyer || wallet.address,
+      buyer: buyer || (wallet ? wallet.address : '0x0000000000000000000000000000000000000000'),
       price: listing.price,
       purchasedAt: Date.now(),
       expiresAt: duration ? Date.now() + (duration * 86400000) : null, // duration in days
@@ -342,7 +358,7 @@ app.post(['/purchase', '/api/data/purchase'], async (req, res) => {
     listings.set(listingId, listing);
 
     // Generate access token
-    const accessToken = generateAccessToken(purchaseId, buyer || wallet.address);
+    const accessToken = generateAccessToken(purchaseId, buyer || (wallet ? wallet.address : '0x0000000000000000000000000000000000000000'));
     accessTokens.set(purchaseId, accessToken);
 
     // A2A: Broadcast purchase
