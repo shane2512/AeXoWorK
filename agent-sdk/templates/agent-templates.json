@@ -1,0 +1,365 @@
+{
+  "templates": [
+    {
+      "id": "client-agent-basic",
+      "name": "Basic Client Agent",
+      "description": "Standard client agent for posting jobs and managing workers",
+      "type": "client",
+      "version": "1.0.0",
+      "category": "core",
+      "difficulty": "beginner",
+      "features": [
+        "Job posting",
+        "Offer management",
+        "Worker selection",
+        "Work approval",
+        "Payment release"
+      ],
+      "config": {
+        "port": 3001,
+        "capabilities": [
+          "job.post",
+          "job.list",
+          "offer.receive",
+          "offer.accept",
+          "work.approve"
+        ],
+        "defaultBudget": 100,
+        "autoApprove": false,
+        "verificationRequired": true
+      },
+      "requiredContracts": [
+        "MARKETPLACE_ADDRESS",
+        "ESCROW_MANAGER_ADDRESS"
+      ],
+      "natsChannels": [
+        "aexowork.offers",
+        "aexowork.deliveries"
+      ]
+    },
+    {
+      "id": "worker-agent-basic",
+      "name": "Basic Worker Agent",
+      "description": "Standard worker agent for finding jobs and delivering work",
+      "type": "worker",
+      "version": "1.0.0",
+      "category": "core",
+      "difficulty": "beginner",
+      "features": [
+        "Job discovery",
+        "Offer submission",
+        "Work execution",
+        "Delivery submission",
+        "Payment receiving"
+      ],
+      "config": {
+        "port": 3002,
+        "capabilities": [
+          "job.discover",
+          "offer.submit",
+          "work.execute",
+          "work.deliver"
+        ],
+        "skills": ["writing", "design", "coding"],
+        "minPrice": 10,
+        "maxPrice": 500,
+        "autoAcceptJobs": false
+      },
+      "requiredContracts": [
+        "MARKETPLACE_ADDRESS",
+        "ESCROW_MANAGER_ADDRESS"
+      ],
+      "natsChannels": [
+        "aexowork.jobs",
+        "aexowork.offers.accepted"
+      ]
+    },
+    {
+      "id": "worker-agent-specialized",
+      "name": "Specialized Worker Agent",
+      "description": "Advanced worker with skill-based job filtering and quality scoring",
+      "type": "worker",
+      "version": "1.0.0",
+      "category": "advanced",
+      "difficulty": "intermediate",
+      "features": [
+        "Advanced job filtering",
+        "Skill matching",
+        "Quality scoring",
+        "Portfolio management",
+        "Automated bidding"
+      ],
+      "config": {
+        "port": 3002,
+        "capabilities": [
+          "job.discover.advanced",
+          "offer.auto_bid",
+          "work.execute",
+          "work.deliver",
+          "portfolio.manage"
+        ],
+        "skills": ["writing"],
+        "specialization": "technical-writing",
+        "minPrice": 50,
+        "maxPrice": 1000,
+        "autoAcceptJobs": true,
+        "bidStrategy": "competitive",
+        "qualityThreshold": 80
+      },
+      "requiredContracts": [
+        "MARKETPLACE_ADDRESS",
+        "ESCROW_MANAGER_ADDRESS",
+        "REPUTATION_MANAGER_ADDRESS"
+      ],
+      "natsChannels": [
+        "aexowork.jobs",
+        "aexowork.offers.accepted",
+        "aexowork.reputation.updated"
+      ]
+    },
+    {
+      "id": "verification-agent-ai",
+      "name": "AI Verification Agent",
+      "description": "Automated verification using AI models and quality checks",
+      "type": "verification",
+      "version": "1.0.0",
+      "category": "advanced",
+      "difficulty": "advanced",
+      "features": [
+        "AI-powered verification",
+        "Plagiarism checking",
+        "Quality scoring",
+        "Automated approval",
+        "Proof generation"
+      ],
+      "config": {
+        "port": 3003,
+        "capabilities": [
+          "verification.ai",
+          "verification.plagiarism",
+          "verification.quality",
+          "verification.auto_approve"
+        ],
+        "aiModel": "gpt-4",
+        "plagiarismThreshold": 90,
+        "qualityThreshold": 70,
+        "autoApprove": true,
+        "ipfsStorage": true
+      },
+      "requiredContracts": [
+        "PROOFS_ADDRESS",
+        "ESCROW_MANAGER_ADDRESS"
+      ],
+      "natsChannels": [
+        "aexowork.deliveries",
+        "aexowork.verification.complete"
+      ]
+    },
+    {
+      "id": "repute-agent",
+      "name": "Reputation Management Agent",
+      "description": "A2A agent for managing reputation scores and issuing badges",
+      "type": "reputation",
+      "version": "1.0.0",
+      "category": "a2a",
+      "difficulty": "intermediate",
+      "features": [
+        "Multi-dimensional scoring",
+        "NFT badge issuance",
+        "Token rewards",
+        "Reputation caching",
+        "Automated updates"
+      ],
+      "config": {
+        "port": 3004,
+        "capabilities": [
+          "reputation.calculate",
+          "reputation.update",
+          "badge.issue",
+          "reputation.query"
+        ],
+        "scoringFactors": {
+          "successRate": 35,
+          "responseTime": 20,
+          "qualityScore": 25,
+          "consistency": 10,
+          "stakingBonus": 10
+        },
+        "badgeTypes": 12,
+        "tokenRewards": true
+      },
+      "requiredContracts": [
+        "REPUTATION_TOKEN_ADDRESS",
+        "BADGE_NFT_ADDRESS",
+        "REPUTATION_MANAGER_ADDRESS"
+      ],
+      "natsChannels": [
+        "aexowork.job.complete",
+        "aexowork.reputation.updated"
+      ]
+    },
+    {
+      "id": "dispute-agent",
+      "name": "Dispute Resolution Agent",
+      "description": "A2A agent for handling disputes with weighted voting",
+      "type": "dispute",
+      "version": "1.0.0",
+      "category": "a2a",
+      "difficulty": "advanced",
+      "features": [
+        "Evidence collection",
+        "Weighted voting",
+        "Automatic resolution",
+        "Appeal mechanism",
+        "Reputation impact"
+      ],
+      "config": {
+        "port": 3005,
+        "capabilities": [
+          "dispute.create",
+          "dispute.submit_evidence",
+          "dispute.vote",
+          "dispute.resolve",
+          "dispute.appeal"
+        ],
+        "evidenceDeadline": 86400,
+        "votingDeadline": 43200,
+        "autoResolve": true,
+        "reputationImpact": true
+      },
+      "requiredContracts": [
+        "ARBITRATION_ADDRESS",
+        "REPUTATION_MANAGER_ADDRESS",
+        "ESCROW_MANAGER_ADDRESS"
+      ],
+      "natsChannels": [
+        "aexowork.disputes",
+        "aexowork.evidence",
+        "aexowork.resolution"
+      ]
+    },
+    {
+      "id": "data-agent",
+      "name": "Data Marketplace Agent",
+      "description": "A2A agent for dataset marketplace and micropayments",
+      "type": "data",
+      "version": "1.0.0",
+      "category": "a2a",
+      "difficulty": "intermediate",
+      "features": [
+        "Dataset marketplace",
+        "3 pricing models",
+        "Micropayments",
+        "Access control",
+        "A2A purchases"
+      ],
+      "config": {
+        "port": 3006,
+        "capabilities": [
+          "data.list",
+          "data.purchase",
+          "data.register",
+          "data.access"
+        ],
+        "pricingModels": ["ONE_TIME", "SUBSCRIPTION", "PAY_PER_USE"],
+        "micropayments": true,
+        "accessTokens": true
+      },
+      "requiredContracts": [
+        "DATA_MARKETPLACE_ADDRESS"
+      ],
+      "natsChannels": [
+        "aexowork.data.requests",
+        "aexowork.data.purchases"
+      ]
+    },
+    {
+      "id": "escrow-agent-advanced",
+      "name": "Advanced Escrow Agent",
+      "description": "A2A agent with milestone-based escrow and auto-release",
+      "type": "escrow",
+      "version": "2.0.0",
+      "category": "a2a",
+      "difficulty": "advanced",
+      "features": [
+        "Standard escrow",
+        "Milestone escrow",
+        "Auto-release",
+        "Multi-party support",
+        "Dispute integration"
+      ],
+      "config": {
+        "port": 3007,
+        "capabilities": [
+          "escrow.create",
+          "escrow.release",
+          "escrow.milestone.complete",
+          "escrow.auto_release"
+        ],
+        "autoRelease": true,
+        "milestoneSupport": true,
+        "verificationThreshold": 70
+      },
+      "requiredContracts": [
+        "ESCROW_MANAGER_ADDRESS",
+        "MILESTONE_ESCROW_ADDRESS"
+      ],
+      "natsChannels": [
+        "aexowork.escrow.requests",
+        "aexowork.verification.complete",
+        "aexowork.milestone.complete"
+      ]
+    },
+    {
+      "id": "custom-agent",
+      "name": "Custom Agent Template",
+      "description": "Blank template for building custom agents",
+      "type": "custom",
+      "version": "1.0.0",
+      "category": "custom",
+      "difficulty": "advanced",
+      "features": [
+        "Customizable capabilities",
+        "Flexible configuration",
+        "A2A protocol support",
+        "NATS integration",
+        "Contract integration"
+      ],
+      "config": {
+        "port": 3100,
+        "capabilities": [],
+        "customConfig": {}
+      },
+      "requiredContracts": [],
+      "natsChannels": []
+    }
+  ],
+  "categories": [
+    {
+      "id": "core",
+      "name": "Core Agents",
+      "description": "Essential agents for basic marketplace functionality"
+    },
+    {
+      "id": "advanced",
+      "name": "Advanced Agents",
+      "description": "Feature-rich agents with specialized capabilities"
+    },
+    {
+      "id": "a2a",
+      "name": "A2A Protocol Agents",
+      "description": "Agents implementing the A2A protocol for agent-to-agent communication"
+    },
+    {
+      "id": "custom",
+      "name": "Custom Agents",
+      "description": "Build your own agents from scratch"
+    }
+  ],
+  "metadata": {
+    "version": "1.0.0",
+    "lastUpdated": "2025-11-18",
+    "totalTemplates": 9
+  }
+}
+
