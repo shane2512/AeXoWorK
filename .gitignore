@@ -23,6 +23,7 @@ check-*.js
 manual-*.js
 # Batch files
 *.bat
+*.ps1
 # Temporary files
 *.tmp
 *.temp
@@ -37,10 +38,15 @@ manual-*.js
 # OS files
 Thumbs.db
 .DS_Store
-# Frontend build
-frontend/dist
+# Frontend
+frontend/node_modules/
+frontend/dist/
 frontend/.env.local
-frontend/node_modules
-# Docs directory
-docs/
+frontend/.env*.local
+# Secrets and keys
+*.key
+*.pem
+*.p12
+secrets/
+*.secret
 
