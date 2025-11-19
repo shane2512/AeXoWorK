@@ -1,0 +1,43 @@
+node_modules
+.env
+.env.local
+.env.*.local
+cache
+artifacts
+coverage
+typechain
+dist
+build
+.DS_Store
+*.log
+
+# Documentation files
+*.md
+!README.md
+
+# Test scripts
+test-*.js
+test-*.ps1
+test-*.bat
+*-test.js
+*-test.ts
+check-*.js
+manual-*.js
+
+# Temporary files
+*.tmp
+*.temp
+*_backup
+*_old
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+Thumbs.db
+.DS_Store
+

@@ -1,0 +1,62 @@
+{
+  "name": "aexowork",
+  "version": "1.0.0",
+  "description": "A2A marketplace using Hedera EVM + HBAR",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:system": "node test-system.js",
+    "test:phase1": "node test-phase1.js",
+    "test:phase2": "node test-phase2.js",
+    "deploy": "hardhat run deploy-and-update-env.js --network hederaTest",
+    "setup": "node setup-local-env.js",
+    "setup:env": "node setup-env.js",
+    "generate:env": "node generate-env.js",
+    "start": "node start-all.js",
+    "nats": "node nats-server.js",
+    "agent:client": "node agent-sdk/agents/clientAgent.js",
+    "agent:worker": "node agent-sdk/agents/workerAgent.js",
+    "agent:verify": "node agent-sdk/agents/verificationAgent.js",
+    "agent:repute": "node agent-sdk/agents/reputeAgent.js",
+    "agent:dispute": "node agent-sdk/agents/disputeAgent.js",
+    "agent:data": "node agent-sdk/agents/dataAgent.js",
+    "agent:escrow": "node agent-sdk/agents/escrowAgent.js",
+    "agent:marketplace": "node agent-sdk/agents/marketplaceAgent.js",
+    "stop:agents": "node stop-agents.js",
+    "adapter:x402": "node agent-sdk/adapters/x402.js",
+    "adapter:ap2": "node agent-sdk/adapters/ap2.js",
+    "customize": "node agent-sdk/cli/customize-agent.js",
+    "frontend": "cd frontend && npm run dev"
+  },
+  "keywords": [
+    "hedera",
+    "a2a",
+    "marketplace",
+    "blockchain"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@hashgraph/sdk": "^2.38.0",
+    "axios": "^1.6.0",
+    "base64-arraybuffer": "^1.0.2",
+    "dotenv": "^16.3.1",
+    "ethers": "^5.7.2",
+    "express": "^4.18.2",
+    "ipfs-http-client": "^60.0.1",
+    "nats": "^2.15.0",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "^2.1.0",
+    "@nomicfoundation/hardhat-network-helpers": "^3.0.3",
+    "@nomicfoundation/hardhat-toolbox": "^2.0.2",
+    "@nomicfoundation/hardhat-verify": "^3.0.7",
+    "@nomiclabs/hardhat-ethers": "^2.2.3",
+    "@openzeppelin/contracts": "^4.9.3",
+    "chai": "^4.3.10",
+    "hardhat": "^2.19.0",
+    "solhint": "^6.0.1"
+  }
+}
