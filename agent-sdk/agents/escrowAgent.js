@@ -6,7 +6,7 @@
 
 const express = require('express');
 const { ethers } = require('ethers');
-const { connect, StringCodec } = require('nats');
+const { sendA2A, subscribe, init: initA2A } = require('../lib/a2a');
 require('dotenv').config();
 
 const app = express();
@@ -24,7 +24,7 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.ESCROW_AGENT_PORT || 3007;
-const sc = StringCodec();
+let sc = null; // Will be initialized in initNATS
 
 // A2A Agent Card - Protocol Compliance
 const AGENT_CARD = {
@@ -79,8 +79,13 @@ const AGENT_CARD = {
 };
 
 // Hedera connection
-const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_JSON_RPC_RELAY);
-const wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY, provider);
+const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_JSON_RPC_RELAY || process.env.HEDERA_RPC_URL || 'https://testnet.hashio.io/api');
+let wallet = null;
+if (process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY) {
+  wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY, provider);
+} else {
+  console.warn('[EscrowAgent] No private key found. Wallet operations will be limited.');
+}
 
 // Contract connections
 let escrowManagerContract;
@@ -106,6 +111,12 @@ let nc;
 
 async function initContracts() {
   try {
+    const escrowManagerAddress = process.env.ESCROW_MANAGER_ADDRESS;
+    if (!escrowManagerAddress) {
+      console.warn('[EscrowAgent] ESCROW_MANAGER_ADDRESS not set. Contract operations will be limited.');
+      return;
+    }
+    
     // Standard EscrowManager
     const escrowManagerABI = [
       'function createEscrow(address worker, string description) external payable returns (uint256)',
@@ -117,11 +128,14 @@ async function initContracts() {
       'event PaymentRefunded(uint256 indexed escrowId, address indexed client, uint256 amount)'
     ];
 
+    // Use provider if wallet is null (read-only)
+    const signerOrProvider = wallet || provider;
     escrowManagerContract = new ethers.Contract(
-      process.env.ESCROW_MANAGER_ADDRESS,
+      escrowManagerAddress,
       escrowManagerABI,
-      wallet
+      signerOrProvider
     );
+    console.log('✅ EscrowManager contract initialized');
 
     // MilestoneEscrow (new)
     const milestoneEscrowABI = [
@@ -133,11 +147,15 @@ async function initContracts() {
       'function getMilestone(bytes32 escrowId, uint256 index) external view returns (tuple(string title, string description, uint256 amount, uint256 deadline, bool completed, bool approved, bool released))'
     ];
 
-    milestoneEscrowContract = new ethers.Contract(
-      process.env.MILESTONE_ESCROW_ADDRESS,
-      milestoneEscrowABI,
-      wallet
-    );
+    const milestoneEscrowAddress = process.env.MILESTONE_ESCROW_ADDRESS;
+    if (milestoneEscrowAddress) {
+      milestoneEscrowContract = new ethers.Contract(
+        milestoneEscrowAddress,
+        milestoneEscrowABI,
+        signerOrProvider
+      );
+      console.log('✅ MilestoneEscrow contract initialized');
+    }
 
     console.log('✅ Escrow contracts initialized');
   } catch (error) {
@@ -147,12 +165,15 @@ async function initContracts() {
 
 async function initNATS() {
   try {
-    nc = await connect({ servers: process.env.NATS_URL || 'nats://localhost:4222' });
-    console.log('✅ Connected to NATS server');
+    await initA2A(process.env.NATS_URL || 'nats://localhost:4222');
+    nc = getConnection();
+    sc = StringCodec();
+    console.log('✅ Connected to NATS server via A2A library');
 
     // Subscribe to A2A channels
     const escrow_requests = nc.subscribe('aexowork.escrow.requests');
     const escrow_created = nc.subscribe('aexowork.escrow.created'); // Track escrows created by ClientAgent
+    const escrow_released = nc.subscribe('aexowork.escrow.released'); // Track escrows released by ClientAgent
     const verification_complete = nc.subscribe('aexowork.verification.complete');
     const milestone_complete = nc.subscribe('aexowork.milestone.complete');
 
@@ -203,6 +224,48 @@ async function initNATS() {
           console.log(`✅ Escrow tracked: ${data.escrowId} - ${data.amount} HBAR`);
         } catch (error) {
           console.error('[A2A] Escrow created notification error:', error);
+        }
+      }
+    })();
+
+    // Handle escrow release notifications (from ClientAgent)
+    (async () => {
+      for await (const msg of escrow_released) {
+        try {
+          const data = JSON.parse(sc.decode(msg.data));
+          console.log('[A2A] Escrow released notification:', data.escrowId);
+          
+          // Update escrow status to completed
+          const escrowIdStr = data.escrowId.toString();
+          let escrow = escrows.get(escrowIdStr);
+          
+          // Try to find by numeric ID if string lookup fails
+          if (!escrow) {
+            for (const [id, e] of escrows.entries()) {
+              if (id.toString() === escrowIdStr || e.id === escrowIdStr) {
+                escrow = e;
+                break;
+              }
+            }
+          }
+          
+          if (escrow) {
+            escrow.status = EscrowStatus.COMPLETED;
+            escrow.releasedAt = data.timestamp || Date.now();
+            escrow.releaseTxHash = data.txHash;
+            escrows.set(escrow.id || escrowIdStr, escrow);
+            
+            // Remove from auto-release queue if present
+            autoReleaseQueue.delete(escrow.id || escrowIdStr);
+            
+            console.log(`✅ Escrow status updated to COMPLETED: ${data.escrowId}`);
+            console.log(`   Released to: ${data.worker}`);
+            console.log(`   Transaction: ${data.txHash || 'N/A'}`);
+          } else {
+            console.warn(`⚠️  Escrow ${data.escrowId} not found in tracking, but release notification received`);
+          }
+        } catch (error) {
+          console.error('[A2A] Escrow released notification error:', error);
         }
       }
     })();
@@ -293,7 +356,7 @@ app.post(['/create-escrow', '/api/escrow/create'], async (req, res) => {
     const escrow = {
       id: escrowId,
       jobId,
-      client: client || wallet.address,
+      client: client || (wallet ? wallet.address : '0x0000000000000000000000000000000000000000'),
       worker,
       amount,
       description,
@@ -380,7 +443,7 @@ app.post(['/create-milestone-escrow', '/api/escrow/milestone/create'], async (re
     const escrow = {
       id: escrowId,
       jobId,
-      client: client || wallet.address,
+      client: client || (wallet ? wallet.address : '0x0000000000000000000000000000000000000000'),
       freelancer,
       totalAmount: ethers.utils.formatEther(totalAmount),
       milestonesCount: milestonesData.length,
