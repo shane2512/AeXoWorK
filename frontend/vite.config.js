@@ -9,7 +9,11 @@ export default defineConfig({
       '/api/client': {
         target: 'http://localhost:3001',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/client/, ''),
+        rewrite: (path) => {
+          // Remove /api/client prefix, but keep the rest
+          const newPath = path.replace(/^\/api\/client/, '');
+          return newPath || '/';
+        },
       },
       '/api/worker': {
         target: 'http://localhost:3002',
@@ -20,6 +24,16 @@ export default defineConfig({
         target: 'http://localhost:3003',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/verification/, ''),
+      },
+      '/api/ipfs': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/ipfs/, '/api/ipfs'),
+      },
+      '/api/agents': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/agents/, '/api/agents'),
       },
     },
   },

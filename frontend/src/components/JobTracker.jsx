@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const JobTracker = ({ wallet }) => {
+const JobTracker = ({ wallet, userRole }) => {
   const [jobs, setJobs] = useState([]);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
@@ -10,44 +10,45 @@ const JobTracker = ({ wallet }) => {
   const WORKER_AGENT_URL = 'http://localhost:3002';
 
   useEffect(() => {
-    if (wallet) {
+    if (wallet && userRole) {
       fetchJobs();
     }
-  }, [wallet, filter]);
+  }, [wallet, filter, userRole]);
 
   const fetchJobs = async () => {
     try {
       setLoading(true);
       
-      // Fetch jobs from ClientAgent (posted jobs)
-      let clientJobs = [];
-      try {
-        const clientResponse = await axios.get(`${CLIENT_AGENT_URL}/jobs`);
-        clientJobs = (clientResponse.data.jobs || []).map(job => ({
-          ...job,
-          userRole: 'client'
-        }));
-      } catch (error) {
-        console.log('ClientAgent not available');
+      if (userRole === 'client') {
+        // Fetch only client's posted jobs
+        try {
+          const clientResponse = await axios.get(`${CLIENT_AGENT_URL}/jobs`);
+          const clientJobs = (clientResponse.data.jobs || []).map(job => ({
+            ...job,
+            userRole: 'client'
+          }));
+          setJobs(clientJobs);
+        } catch (error) {
+          console.log('ClientAgent not available');
+          setJobs([]);
+        }
+      } else if (userRole === 'freelancer') {
+        // Fetch only freelancer's accepted work
+        try {
+          const workerResponse = await axios.get(`${WORKER_AGENT_URL}/work`);
+          const workerJobs = (workerResponse.data.work || []).map(job => ({
+            ...job,
+            userRole: 'worker'
+          }));
+          setJobs(workerJobs);
+        } catch (error) {
+          console.log('WorkerAgent not available');
+          setJobs([]);
+        }
       }
-
-      // Fetch jobs from WorkerAgent (accepted work)
-      let workerJobs = [];
-      try {
-        const workerResponse = await axios.get(`${WORKER_AGENT_URL}/work`);
-        workerJobs = (workerResponse.data.work || []).map(job => ({
-          ...job,
-          userRole: 'worker'
-        }));
-      } catch (error) {
-        console.log('WorkerAgent not available');
-      }
-
-      // Combine and filter
-      const allJobs = [...clientJobs, ...workerJobs];
-      setJobs(allJobs);
     } catch (error) {
       console.error('Error fetching jobs:', error);
+      setJobs([]);
     } finally {
       setLoading(false);
     }
@@ -72,7 +73,7 @@ const JobTracker = ({ wallet }) => {
 
   const filteredJobs = filter === 'all' 
     ? jobs 
-    : jobs.filter(job => job.status === filter || job.userRole === filter);
+    : jobs.filter(job => job.status === filter);
 
   if (!wallet) {
     return (
@@ -94,10 +95,12 @@ const JobTracker = ({ wallet }) => {
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          📋 Job Tracker
+          📋 {userRole === 'client' ? 'My Posted Jobs' : 'My Work'}
         </h1>
         <p className="text-gray-600">
-          Track all your jobs as client and worker
+          {userRole === 'client' 
+            ? 'Track all the jobs you have posted'
+            : 'Track all the work you are doing'}
         </p>
       </div>
 
@@ -127,7 +130,7 @@ const JobTracker = ({ wallet }) => {
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Filters - Role Specific */}
       <div className="bg-white rounded-lg shadow-md p-4 mb-6">
         <div className="flex flex-wrap gap-2">
           <button
@@ -136,40 +139,47 @@ const JobTracker = ({ wallet }) => {
               filter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            All Jobs
+            All
           </button>
-          <button
-            onClick={() => setFilter('client')}
-            className={`px-4 py-2 rounded-md transition-colors ${
-              filter === 'client' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            👤 As Client
-          </button>
-          <button
-            onClick={() => setFilter('worker')}
-            className={`px-4 py-2 rounded-md transition-colors ${
-              filter === 'worker' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            🔧 As Worker
-          </button>
-          <button
-            onClick={() => setFilter('pending')}
-            className={`px-4 py-2 rounded-md transition-colors ${
-              filter === 'pending' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            Pending
-          </button>
-          <button
-            onClick={() => setFilter('in_progress')}
-            className={`px-4 py-2 rounded-md transition-colors ${
-              filter === 'in_progress' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            In Progress
-          </button>
+          {userRole === 'client' ? (
+            <>
+              <button
+                onClick={() => setFilter('open')}
+                className={`px-4 py-2 rounded-md transition-colors ${
+                  filter === 'open' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                Open
+              </button>
+              <button
+                onClick={() => setFilter('assigned')}
+                className={`px-4 py-2 rounded-md transition-colors ${
+                  filter === 'assigned' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                Assigned
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setFilter('in_progress')}
+                className={`px-4 py-2 rounded-md transition-colors ${
+                  filter === 'in_progress' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                In Progress
+              </button>
+              <button
+                onClick={() => setFilter('delivered')}
+                className={`px-4 py-2 rounded-md transition-colors ${
+                  filter === 'delivered' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                Delivered
+              </button>
+            </>
+          )}
           <button
             onClick={() => setFilter('completed')}
             className={`px-4 py-2 rounded-md transition-colors ${

@@ -1,9 +1,31 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
-function PostJob({ account }) {
+function PostJob({ account, userRole }) {
   const navigate = useNavigate();
+
+  // Redirect if not a client
+  useEffect(() => {
+    if (userRole && userRole !== 'client') {
+      navigate('/marketplace');
+    }
+  }, [userRole, navigate]);
+
+  if (userRole && userRole !== 'client') {
+    return (
+      <div className="text-center py-12">
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h2>
+        <p className="text-gray-600">Only clients can post jobs.</p>
+        <button
+          onClick={() => navigate('/marketplace')}
+          className="mt-4 btn-primary"
+        >
+          Go to Marketplace
+        </button>
+      </div>
+    );
+  }
   const [formData, setFormData] = useState({
     title: '',
     description: '',
