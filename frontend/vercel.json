@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/client/(.*)",
+      "dest": "http://your-backend-url:3001/$1"
+    },
+    {
+      "src": "/api/worker/(.*)",
+      "dest": "http://your-backend-url:3002/$1"
+    },
+    {
+      "src": "/api/verification/(.*)",
+      "dest": "http://your-backend-url:3003/$1"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
+  "env": {
+    "VITE_HEDERA_NETWORK": "testnet",
+    "VITE_AGENT_REGISTRY_ADDRESS": "@agent-registry-address",
+    "VITE_ESCROW_MANAGER_ADDRESS": "@escrow-manager-address",
+    "VITE_CLIENT_AGENT_URL": "@client-agent-url"
+  }
+}
+
