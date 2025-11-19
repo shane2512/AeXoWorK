@@ -1,8 +1,9 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const express = require('express');
 const { ethers } = require('ethers');
 const { signJSON } = require('../lib/signer');
 const { sendA2A, subscribe, init: initA2A } = require('../lib/a2a');
+const axios = require('axios');
 
 /**
  * ReputeAgent - Reputation Management System
@@ -205,8 +206,8 @@ async function checkBadgeEligibility(userStats, address) {
  */
 async function mintReputationTokens(address, amount, reason) {
   try {
-    const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_RPC_URL);
-    const wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY, provider);
+    const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_RPC_URL || process.env.HEDERA_JSON_RPC_RELAY || 'https://testnet.hashio.io/api');
+    const wallet = process.env.HEDERA_PRIVATE_KEY ? new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY, provider) : null;
 
     const tokenAbi = [
       'function mintReputation(address to, uint256 amount, string reason) external'
@@ -241,8 +242,8 @@ async function mintReputationTokens(address, amount, reason) {
  */
 async function issueBadge(address, badge) {
   try {
-    const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_RPC_URL);
-    const wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY, provider);
+    const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_RPC_URL || process.env.HEDERA_JSON_RPC_RELAY || 'https://testnet.hashio.io/api');
+    const wallet = process.env.HEDERA_PRIVATE_KEY ? new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY, provider) : null;
 
     const badgeAbi = [
       'function issueBadge(address recipient, uint8 badgeType, string name, string description, string tokenURI, string criteriaMetURI, bool soulbound) external returns (uint256)',
@@ -475,12 +476,94 @@ async function init() {
 
   // Connect to A2A message bus
   await initA2A(process.env.NATS_URL);
+  
+  // Wait a bit for connection to stabilize
+  await new Promise(resolve => setTimeout(resolve, 500));
 
-  // Subscribe to job completion events
+  // Subscribe to reputation update events from ClientAgent
+  console.log('[ReputeAgent] 📡 Subscribing to aexowork.reputation.updates...');
+  subscribe('aexowork.reputation.updates', async (msg) => {
+    if (msg.type === 'reputation.update') {
+      console.log(`[ReputeAgent] 📨 Received reputation update for escrow ${msg.escrowId}`);
+      console.log(`[ReputeAgent]    Worker: ${msg.worker}`);
+      console.log(`[ReputeAgent]    Client: ${msg.client}`);
+      console.log(`[ReputeAgent]    Scores:`, msg.scores);
+      
+      try {
+        // Update worker reputation
+        if (msg.worker && msg.worker !== 'unknown') {
+          // Normalize address - handle DID format or Ethereum address
+          let workerAddress = msg.worker;
+          if (workerAddress.startsWith('did:')) {
+            // Extract address from DID if possible, or use DID as-is
+            console.log(`[ReputeAgent] ⚠️  Worker address is a DID: ${workerAddress}, using as-is`);
+          }
+          
+          const workerUpdate = {
+            address: workerAddress,
+            jobSuccess: true,
+            responseTime: 24, // Default response time in hours
+            qualityRating: msg.scores.worker * 15 // Convert score to rating (5 * 15 = 75)
+          };
+          
+          console.log(`[ReputeAgent] 📝 Updating worker reputation for: ${workerAddress}`);
+          
+          // Call update-reputation endpoint internally
+          const updateResponse = await axios.post(`http://localhost:${process.env.REPUTE_AGENT_PORT || 3004}/update-reputation`, workerUpdate).catch(err => {
+            console.error(`[ReputeAgent] ❌ Could not update worker reputation via HTTP: ${err.message}`);
+            if (err.response) {
+              console.error(`[ReputeAgent]    Response: ${JSON.stringify(err.response.data)}`);
+            }
+            return null;
+          });
+          
+          if (updateResponse && updateResponse.data) {
+            console.log(`[ReputeAgent] ✅ Updated worker reputation: ${workerAddress}`);
+            console.log(`[ReputeAgent]    New score: ${updateResponse.data.reputationScore || 'N/A'}`);
+            console.log(`[ReputeAgent]    Total jobs: ${updateResponse.data.metadata?.totalJobs || 'N/A'}`);
+          } else {
+            console.warn(`[ReputeAgent] ⚠️  No response from update-reputation endpoint for worker`);
+          }
+        } else {
+          console.warn(`[ReputeAgent] ⚠️  Worker address is missing or 'unknown': ${msg.worker}`);
+        }
+        
+        // Update client reputation
+        if (msg.client && msg.client !== 'unknown' && !msg.client.startsWith('did:')) {
+          const clientUpdate = {
+            address: msg.client,
+            jobSuccess: true,
+            responseTime: 12,
+            qualityRating: msg.scores.client * 15
+          };
+          
+          console.log(`[ReputeAgent] 📝 Updating client reputation for: ${msg.client}`);
+          
+          const updateResponse = await axios.post(`http://localhost:${process.env.REPUTE_AGENT_PORT || 3004}/update-reputation`, clientUpdate).catch(err => {
+            console.error(`[ReputeAgent] ❌ Could not update client reputation via HTTP: ${err.message}`);
+            return null;
+          });
+          
+          if (updateResponse && updateResponse.data) {
+            console.log(`[ReputeAgent] ✅ Updated client reputation: ${msg.client}`);
+            console.log(`[ReputeAgent]    New score: ${updateResponse.data.reputationScore || 'N/A'}`);
+          }
+        } else {
+          console.warn(`[ReputeAgent] ⚠️  Client address is missing, 'unknown', or DID format: ${msg.client}`);
+        }
+        
+        console.log(`[ReputeAgent] ✅ Reputation update processed for escrow ${msg.escrowId}`);
+      } catch (error) {
+        console.error(`[ReputeAgent] ❌ Error processing reputation update:`, error);
+        console.error(`[ReputeAgent]    Stack:`, error.stack);
+      }
+    }
+  });
+
+  // Subscribe to job completion events (legacy)
   subscribe('aexowork.job.completed', async (msg) => {
     if (msg.type === 'JobCompleted') {
       console.log(`[ReputeAgent] Job completed: ${msg.jobId}`);
-
       // Update reputation for both parties
       // This would be triggered by EscrowAgent or similar
     }
