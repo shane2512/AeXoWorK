@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { ethers } = require('ethers');
 const {
   Client,
@@ -20,12 +21,17 @@ function initEVM() {
   if (provider) return { provider, wallet };
   
   provider = new ethers.providers.JsonRpcProvider(
-    process.env.HEDERA_RPC_URL || 'https://testnet.hashio.io/api'
+    process.env.HEDERA_RPC_URL || process.env.HEDERA_JSON_RPC_RELAY || 'https://testnet.hashio.io/api'
   );
   
-  wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY, provider);
+  if (process.env.HEDERA_PRIVATE_KEY) {
+    wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY, provider);
+    console.log('[Hedera EVM] Initialized with wallet:', wallet.address);
+  } else {
+    console.warn('[Hedera EVM] No HEDERA_PRIVATE_KEY found. Wallet operations will be limited.');
+    wallet = null;
+  }
   
-  console.log('[Hedera EVM] Initialized with wallet:', wallet.address);
   return { provider, wallet };
 }
 
@@ -59,12 +65,16 @@ function getContract(address, abi, privateKey = null) {
   if (privateKey) {
     // Use provided private key
     const customProvider = new ethers.providers.JsonRpcProvider(
-      process.env.HEDERA_RPC_URL || 'https://testnet.hashio.io/api'
+      process.env.HEDERA_RPC_URL || process.env.HEDERA_JSON_RPC_RELAY || 'https://testnet.hashio.io/api'
     );
     const customWallet = new ethers.Wallet(privateKey, customProvider);
     return new ethers.Contract(address, abi, customWallet);
   }
-  const { wallet: w } = initEVM();
+  const { provider: p, wallet: w } = initEVM();
+  // If no wallet, use provider only (read-only operations)
+  if (!w) {
+    return new ethers.Contract(address, abi, p);
+  }
   return new ethers.Contract(address, abi, w);
 }
 

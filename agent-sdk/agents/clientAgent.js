@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const express = require('express');
 const { ethers } = require('ethers');
 const { signJSON } = require('../lib/signer');
@@ -53,6 +53,130 @@ app.get('/', (req, res) => {
       escrowManager: process.env.ESCROW_MANAGER_ADDRESS
     }
   });
+});
+
+/**
+ * POST /api/ipfs/upload
+ * Upload JSON data to IPFS
+ */
+app.post('/api/ipfs/upload', async (req, res) => {
+  try {
+    const data = req.body;
+    const cid = await uploadJSON(data);
+    res.json({ success: true, cid });
+  } catch (error) {
+    console.error('[ClientAgent] Error uploading to IPFS:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/agents
+ * Get all registered agents from AgentRegistry
+ */
+app.get('/api/agents', async (req, res) => {
+  try {
+    const { downloadJSON } = require('../lib/ipfs');
+    const { getContract } = require('../lib/hedera');
+    const { ethers } = require('ethers');
+    
+    const AGENT_REGISTRY_ADDRESS = process.env.AGENT_REGISTRY_ADDRESS || "0xCdB11f8D0Cba2b4e0fa8114Ec660bda8081E7197";
+    const agentRegistryABI = [
+      "function agents(uint256) view returns (address owner, string did, string metadataCID, uint8 agentType, uint8 status)",
+      "function nextAgentId() view returns (uint256)"
+    ];
+    
+    const contract = getContract(AGENT_REGISTRY_ADDRESS, agentRegistryABI);
+    const nextId = await contract.nextAgentId();
+    
+    const agents = [];
+    
+    // Fetch all agents (from ID 1 to nextId-1)
+    for (let i = 1; i < nextId.toNumber(); i++) {
+      try {
+        const agentData = await contract.agents(i);
+        
+        // Download metadata from IPFS
+        let metadata = null;
+        if (agentData.metadataCID && !agentData.metadataCID.startsWith('fallback_')) {
+          try {
+            metadata = await downloadJSON(agentData.metadataCID);
+          } catch (ipfsError) {
+            console.warn(`[ClientAgent] Could not download metadata for agent ${i}:`, ipfsError.message);
+          }
+        }
+        
+        agents.push({
+          id: i.toString(),
+          agentId: i.toString(),
+          owner: agentData.owner,
+          did: agentData.did,
+          metadataCID: agentData.metadataCID,
+          agentType: agentData.agentType === 0 ? 'client' : 'worker',
+          status: agentData.status,
+          name: metadata?.name || 'Unnamed Agent',
+          description: metadata?.description || '',
+          ...metadata
+        });
+      } catch (error) {
+        console.warn(`[ClientAgent] Error fetching agent ${i}:`, error.message);
+        // Continue with next agent
+      }
+    }
+    
+    res.json({ success: true, agents, count: agents.length });
+  } catch (error) {
+    console.error('[ClientAgent] Error fetching agents:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/agents/:agentId
+ * Get specific agent details
+ */
+app.get('/api/agents/:agentId', async (req, res) => {
+  try {
+    const { downloadJSON } = require('../lib/ipfs');
+    const { getContract } = require('../lib/hedera');
+    const agentId = req.params.agentId;
+    
+    const AGENT_REGISTRY_ADDRESS = process.env.AGENT_REGISTRY_ADDRESS || "0xCdB11f8D0Cba2b4e0fa8114Ec660bda8081E7197";
+    const agentRegistryABI = [
+      "function agents(uint256) view returns (address owner, string did, string metadataCID, uint8 agentType, uint8 status)"
+    ];
+    
+    const contract = getContract(AGENT_REGISTRY_ADDRESS, agentRegistryABI);
+    const agentData = await contract.agents(agentId);
+    
+    // Download metadata from IPFS
+    let metadata = null;
+    if (agentData.metadataCID && !agentData.metadataCID.startsWith('fallback_')) {
+      try {
+        metadata = await downloadJSON(agentData.metadataCID);
+      } catch (ipfsError) {
+        console.warn(`[ClientAgent] Could not download metadata:`, ipfsError.message);
+      }
+    }
+    
+    const agent = {
+      id: agentId,
+      agentId: agentId,
+      owner: agentData.owner,
+      did: agentData.did,
+      metadataCID: agentData.metadataCID,
+      agentType: agentData.agentType === 0 ? 'client' : 'worker',
+      status: agentData.status,
+      name: metadata?.name || 'Unnamed Agent',
+      description: metadata?.description || '',
+      ...metadata
+    };
+    
+    res.json({ success: true, agent });
+  } catch (error) {
+    console.error('[ClientAgent] Error fetching agent:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 /**
@@ -351,7 +475,28 @@ app.post('/approve-work', async (req, res) => {
     const abi = ['function approveWork(bytes32 escrowId)'];
     const escrowManager = getContract(process.env.ESCROW_MANAGER_ADDRESS, abi);
     const tx = await escrowManager.approveWork(escrowId);
-    await tx.wait();
+    const receipt = await tx.wait();
+    
+    console.log(`[ClientAgent] ✅ Work approved on-chain, transaction: ${tx.hash}`);
+    
+    // Notify EscrowAgent about fund release via A2A
+    const escrowReleaseNotification = {
+      type: 'escrow.released',
+      escrowId: escrowId.toString(),
+      worker: req.body.workerAddress || 'unknown',
+      client: process.env.AGENT_DID || account,
+      txHash: tx.hash,
+      timestamp: Date.now(),
+    };
+    try {
+      if (process.env.AGENT_PRIVATE_KEY_BASE64) {
+        escrowReleaseNotification.signature = signJSON(escrowReleaseNotification, process.env.AGENT_PRIVATE_KEY_BASE64);
+      }
+    } catch (signError) {
+      console.warn('[ClientAgent] Could not sign escrow release notification:', signError.message);
+    }
+    await sendA2A('aexowork.escrow.released', escrowReleaseNotification);
+    console.log(`[ClientAgent] 📤 Notified EscrowAgent about fund release for escrow ${escrowId}`);
     
     // STEP 9: Auto-Update Reputation via ReputeAgent (A2A Protocol)
     // ClientAgent automatically triggers ReputeAgent to update reputation scores
@@ -378,8 +523,9 @@ app.post('/approve-work', async (req, res) => {
     
     // Send reputation update to ReputeAgent via A2A
     await sendA2A('aexowork.reputation.updates', reputationUpdate);
+    console.log(`[ClientAgent] 📤 Sent reputation update to ReputeAgent for worker ${reputationUpdate.worker}`);
     
-    console.log(`[ClientAgent] Work approved for escrow ${escrowId}, reputation updated`);
+    console.log(`[ClientAgent] ✅ Work approved for escrow ${escrowId}, payment released, reputation updated`);
     
     res.json({
       ok: true,

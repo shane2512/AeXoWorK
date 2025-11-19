@@ -10,11 +10,9 @@ dist
 build
 .DS_Store
 *.log
-
 # Documentation files
 *.md
 !README.md
-
 # Test scripts
 test-*.js
 test-*.ps1
@@ -23,21 +21,26 @@ test-*.bat
 *-test.ts
 check-*.js
 manual-*.js
-
+# Batch files
+*.bat
 # Temporary files
 *.tmp
 *.temp
 *_backup
 *_old
-
 # IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
 # OS files
 Thumbs.db
 .DS_Store
+# Frontend build
+frontend/dist
+frontend/.env.local
+frontend/node_modules
+# Docs directory
+docs/
 

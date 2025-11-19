@@ -1,3 +1,4 @@
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const NATS = require('nats');
 
 let nc = null;
@@ -8,10 +9,26 @@ let sc = null;
  * @param {string} url - NATS server URL
  */
 async function init(url) {
-  if (nc) return;
-  nc = await NATS.connect({ servers: url || process.env.NATS_URL });
-  sc = NATS.StringCodec();
-  console.log('Connected to NATS server');
+  if (nc && !nc.isClosed()) return;
+  
+  const natsUrl = url || process.env.NATS_URL || 'nats://localhost:4222';
+  try {
+    nc = await NATS.connect({ servers: natsUrl });
+    sc = NATS.StringCodec();
+    console.log(`[A2A] ✅ Connected to NATS server: ${natsUrl}`);
+    
+    // Handle connection errors
+    nc.closed().then(() => {
+      console.log('[A2A] Connection closed');
+      nc = null;
+    }).catch(err => {
+      console.error('[A2A] Connection error:', err.message);
+      nc = null;
+    });
+  } catch (error) {
+    console.error(`[A2A] ❌ Failed to connect to NATS: ${error.message}`);
+    throw error;
+  }
 }
 
 /**
