@@ -1,11 +1,11 @@
-require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
-const express = require('express');
-const { ethers } = require('ethers');
-const { signJSON } = require('../lib/signer');
-const { uploadJSON } = require('../lib/ipfs');
-const { sendA2A, subscribe, init: initA2A } = require('../lib/a2a');
-const { getContract } = require('../lib/hedera');
-const axios = require('axios');
+import 'dotenv/config';
+import express, { Request, Response, NextFunction } from 'express';
+import { ethers } from 'ethers';
+import { signJSON } from '../lib/signer';
+import { uploadJSON } from '../lib/ipfs';
+import { sendA2A, subscribe, init as initA2A } from '../lib/a2a';
+import { getContract, initEVM } from '../lib/hedera';
+import axios from 'axios';
 
 /**
  * WorkerAgent - Discovers jobs, makes offers, delivers work
@@ -15,7 +15,7 @@ const app = express();
 app.use(express.json());
 
 // CORS middleware
-app.use((req, res, next) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -25,15 +25,37 @@ app.use((req, res, next) => {
   next();
 });
 
+// Type definitions
+interface Job {
+  jobId: string;
+  jobCID?: string;
+  title?: string;
+  description?: string;
+  budgetHBAR?: string;
+  requiredSkills?: string[];
+  deadline?: number | null;
+  clientAddress?: string;
+  [key: string]: any;
+}
+
+interface Work {
+  jobId: string;
+  job: Job;
+  escrowId: string;
+  status: string;
+  startedAt: number;
+  deliveryCID?: string;
+}
+
 // Store available jobs and accepted work
-const availableJobs = new Map();
-const acceptedWork = new Map();
+const availableJobs = new Map<string, Job>();
+const acceptedWork = new Map<string, Work>();
 
 /**
  * GET /
  * Health check and status
  */
-app.get('/', (req, res) => {
+app.get('/', (req: Request, res: Response) => {
   res.json({
     status: 'running',
     agent: 'WorkerAgent',
@@ -55,10 +77,8 @@ app.get('/', (req, res) => {
 
 /**
  * Evaluate if we should bid on a job
- * @param {Object} job - Job details
- * @returns {boolean}
  */
-function shouldBidOnJob(job) {
+function shouldBidOnJob(job: Job): boolean {
   // Simple logic: check if we have required skills
   const mySkills = (process.env.AGENT_SKILLS || 'writing,design,coding,UIUX,Figma,Framer,React,SQL').split(',');
   
@@ -77,7 +97,7 @@ function shouldBidOnJob(job) {
 /**
  * Handle incoming job postings (JobOfferRequest per user flow spec)
  */
-async function handleJobPost(msg) {
+async function handleJobPost(msg: any): Promise<void> {
   // Support both old 'JobPost' and new 'JobOfferRequest' types for backward compatibility
   if (msg.type !== 'JobPost' && msg.type !== 'JobOfferRequest') return;
   
@@ -95,12 +115,12 @@ async function handleJobPost(msg) {
   // STEP 10 (OPTIONAL): Check if data marketplace access is needed
   // WorkerAgent can automatically purchase datasets/models/APIs if needed
   let dataAccess = null;
-  if (msg.requiredSkills && msg.requiredSkills.some(skill => ['data', 'dataset', 'api', 'model'].includes(skill.toLowerCase()))) {
+  if (msg.requiredSkills && msg.requiredSkills.some((skill: string) => ['data', 'dataset', 'api', 'model'].includes(skill.toLowerCase()))) {
     // Request data from DataAgent via A2A
-    const dataRequest = {
+    const dataRequest: any = {
       type: 'data.request',
       jobId: msg.jobId,
-      requiredData: msg.requiredSkills.filter(s => ['data', 'dataset', 'api'].includes(s.toLowerCase())),
+      requiredData: msg.requiredSkills.filter((s: string) => ['data', 'dataset', 'api'].includes(s.toLowerCase())),
       budget: parseFloat(msg.budgetHBAR) / 1e18 * 0.1, // 10% of job budget for data
       timestamp: Date.now(),
     };
@@ -108,12 +128,13 @@ async function handleJobPost(msg) {
       if (process.env.AGENT_PRIVATE_KEY_BASE64) {
         dataRequest.signature = signJSON(dataRequest, process.env.AGENT_PRIVATE_KEY_BASE64);
       }
-    } catch (signError) {
+    } catch (signError: any) {
       console.warn('[WorkerAgent] Could not sign data request:', signError.message);
     }
     
-    // Send data request (async - will be handled separately)
-    sendA2A('aexowork.data.requests', dataRequest).catch(err => {
+    // Send data request to DataAgent only (async - will be handled separately)
+    dataRequest.to = process.env.DATA_AGENT_ACCOUNT_ID; // Target DataAgent only
+    sendA2A('aexowork.data.requests', dataRequest).catch((err: any) => {
       console.log(`[WorkerAgent] Data request failed (optional): ${err.message}`);
     });
     
@@ -121,7 +142,7 @@ async function handleJobPost(msg) {
   }
   
   // Create offer (OfferMessage per user flow spec)
-  const offer = {
+  const offer: any = {
     type: 'OfferMessage', // Updated to match user flow specification
     offerId: 'offer-' + Date.now(),
     jobId: msg.jobId,
@@ -141,26 +162,27 @@ async function handleJobPost(msg) {
     agentName: 'WorkerAgent',
     pastJobs: 0, // TODO: Get from ReputeAgent
     timestamp: Date.now(),
+    to: msg.fromAccountId || process.env.CLIENT_AGENT_ACCOUNT_ID, // Target the ClientAgent that posted the job
   };
   
   try {
     if (process.env.AGENT_PRIVATE_KEY_BASE64) {
       offer.signature = signJSON(offer, process.env.AGENT_PRIVATE_KEY_BASE64);
     }
-  } catch (signError) {
+  } catch (signError: any) {
     console.warn('[WorkerAgent] Could not sign offer:', signError.message);
   }
   
-  // Send offer
+  // Send offer to ClientAgent only
   await sendA2A('aexowork.offers', offer);
   
-  console.log(`[WorkerAgent] Sent offer ${offer.offerId} for job ${msg.jobId}`);
+  console.log(`[WorkerAgent] 📤 Sent offer ${offer.offerId} for job ${msg.jobId} to ClientAgent (${offer.to || 'broadcast'})`);
 }
 
 /**
  * Handle offer acceptance
  */
-async function handleOfferAccepted(msg) {
+async function handleOfferAccepted(msg: any): Promise<void> {
   if (msg.type !== 'OfferAccepted') return;
   
   console.log(`[WorkerAgent] 📨 Offer accepted message received`);
@@ -199,12 +221,12 @@ async function handleOfferAccepted(msg) {
           'function escrows(bytes32) view returns (address client, address payable freelancer, uint256 amount, uint8 status, address verifier, uint256 createdAt)',
         ];
         // Use read-only contract for checking (no wallet needed)
-        const { provider } = require('../lib/hedera').initEVM();
+        const { provider } = initEVM();
         const escrowManager = new ethers.Contract(process.env.ESCROW_MANAGER_ADDRESS, escrowAbi, provider);
         
         try {
           // Convert escrowId to bytes32 if it's a string
-          let escrowIdBytes32 = msg.escrowId;
+          let escrowIdBytes32: string = msg.escrowId;
           console.log(`[WorkerAgent]    Original escrowId: ${escrowIdBytes32} (type: ${typeof escrowIdBytes32})`);
           
           if (typeof escrowIdBytes32 === 'string' && escrowIdBytes32.startsWith('0x')) {
@@ -243,7 +265,7 @@ async function handleOfferAccepted(msg) {
           } else {
             console.log(`[WorkerAgent] ⏳ Escrow ${msg.escrowId} not ready yet (status: ${escrowInfo?.status || 'not found'}, need >= 2)`);
           }
-        } catch (e) {
+        } catch (e: any) {
           // Escrow might not exist yet or wrong format
           console.log(`[WorkerAgent] ⚠️  Escrow check error: ${e.message}`);
           console.log(`[WorkerAgent]    Error details: ${e.stack || 'No stack trace'}`);
@@ -260,7 +282,7 @@ async function handleOfferAccepted(msg) {
         console.error(`[WorkerAgent] ❌ Max retries (${maxRetries}) reached. Escrow ${msg.escrowId} may not be funded.`);
         console.error(`[WorkerAgent]    Please check HashScan to verify escrow status.`);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.warn(`[WorkerAgent] ❌ Error in checkEscrowAndDeliver: ${error.message}`);
       if (retryCount < maxRetries) {
         setTimeout(checkEscrowAndDeliver, 5000);
@@ -276,7 +298,7 @@ async function handleOfferAccepted(msg) {
 /**
  * Deliver completed work
  */
-async function deliverWork(escrowId) {
+async function deliverWork(escrowId: string): Promise<void> {
   try {
     const work = acceptedWork.get(escrowId);
     if (!work) {
@@ -310,13 +332,13 @@ async function deliverWork(escrowId) {
       // Use WorkerAgent's private key if available, otherwise use default
       // The contract requires msg.sender == freelancer, so we need the freelancer's wallet
       const workerPrivateKey = process.env.WORKER_PRIVATE_KEY || process.env.WORKER_HEDERA_PRIVATE_KEY || process.env.HEDERA_PRIVATE_KEY;
-      const escrowManager = getContract(process.env.ESCROW_MANAGER_ADDRESS, escrowAbi, workerPrivateKey);
+      const escrowManager = getContract(process.env.ESCROW_MANAGER_ADDRESS!, escrowAbi, workerPrivateKey);
       
       // Check escrow status using escrows mapping
-      let escrowInfo;
+      let escrowInfo: any;
       try {
         // Convert escrowId to bytes32 if needed
-        let escrowIdBytes32 = escrowId;
+        let escrowIdBytes32: string = escrowId;
         if (typeof escrowIdBytes32 === 'string' && escrowIdBytes32.startsWith('0x') && escrowIdBytes32.length === 66) {
           // Already valid bytes32 hex string
         } else if (typeof escrowIdBytes32 === 'string') {
@@ -330,7 +352,7 @@ async function deliverWork(escrowId) {
         }
         
         escrowInfo = await escrowManager.escrows(escrowIdBytes32);
-      } catch (checkError) {
+      } catch (checkError: any) {
         // Escrow might not exist yet, continue with off-chain delivery
         console.warn(`[WorkerAgent] Escrow ${escrowId} check failed: ${checkError.message}`);
         escrowInfo = null;
@@ -356,7 +378,7 @@ async function deliverWork(escrowId) {
         }
         
         // Create contract instance with worker's wallet
-        const { provider } = require('../lib/hedera').initEVM();
+        const { provider } = initEVM();
         const workerWallet = new ethers.Wallet(workerPrivateKey, provider);
         const workerAddressFromKey = workerWallet.address.toLowerCase();
         
@@ -368,13 +390,13 @@ async function deliverWork(escrowId) {
         }
         
         const escrowManagerWithWorkerWallet = new ethers.Contract(
-          process.env.ESCROW_MANAGER_ADDRESS,
+          process.env.ESCROW_MANAGER_ADDRESS!,
           escrowAbi,
           workerWallet
         );
         
         // Convert escrowId to bytes32 for submission
-        let escrowIdBytes32 = escrowId;
+        let escrowIdBytes32: string = escrowId;
         if (typeof escrowIdBytes32 === 'string' && escrowIdBytes32.startsWith('0x') && escrowIdBytes32.length === 66) {
           // Already valid
         } else if (typeof escrowIdBytes32 === 'string') {
@@ -398,7 +420,7 @@ async function deliverWork(escrowId) {
         console.log(`[WorkerAgent]    🔗 HashScan: https://hashscan.io/testnet/transaction/${tx.hash}`);
         
         // Check if delivery event was emitted
-        const deliveryEvent = receipt.events?.find(e => e.event === 'DeliverySubmitted' || e.event === 'WorkDelivered');
+        const deliveryEvent = receipt.events?.find((e: any) => e.event === 'DeliverySubmitted' || e.event === 'WorkDelivered');
         if (deliveryEvent) {
           console.log(`[WorkerAgent]    Delivery event confirmed`);
         }
@@ -406,7 +428,7 @@ async function deliverWork(escrowId) {
         console.warn(`[WorkerAgent] Escrow ${escrowId} not funded yet (status: ${escrowInfo?.status || 'not found'}), delivering off-chain only`);
         // Continue with off-chain delivery (A2A messaging still works)
       }
-    } catch (onChainError) {
+    } catch (onChainError: any) {
       // If on-chain submission fails, continue with off-chain delivery
       console.warn(`[WorkerAgent] On-chain delivery failed: ${onChainError.message}`);
       console.log(`[WorkerAgent] Continuing with off-chain delivery via A2A`);
@@ -428,7 +450,7 @@ async function deliverWork(escrowId) {
     
     // STEP 6: Send deliverable to VerificationAgent FIRST (per user flow spec)
     // WorkerAgent sends deliverable to VerificationAgent for verification BEFORE sending to ClientAgent
-    const verificationRequest = {
+    const verificationRequest: any = {
       type: 'verification.request',
       escrowId,
       jobId: work.jobId,
@@ -437,20 +459,21 @@ async function deliverWork(escrowId) {
       checks: ['plagiarism', 'quality', 'deadline', 'completeness'],
       clientAccountId: work.job.clientAddress || process.env.CLIENT_AGENT_ACCOUNT_ID, // For VerificationAgent to forward to ClientAgent
       timestamp: Date.now(),
+      to: process.env.VERIFICATION_AGENT_ACCOUNT_ID, // Target VerificationAgent only
     };
     try {
       if (process.env.AGENT_PRIVATE_KEY_BASE64) {
         verificationRequest.signature = signJSON(verificationRequest, process.env.AGENT_PRIVATE_KEY_BASE64);
       }
-    } catch (signError) {
+    } catch (signError: any) {
       console.warn('[WorkerAgent] Could not sign verification request:', signError.message);
     }
     
     // Send deliverable to VerificationAgent ONLY (not to ClientAgent directly)
     await sendA2A('aexowork.verification.requests', verificationRequest);
-    console.log(`[WorkerAgent] ✅ Deliverable sent to VerificationAgent for escrow ${escrowId}, CID: ${deliveryCID}`);
+    console.log(`[WorkerAgent] ✅ Deliverable sent to VerificationAgent (${process.env.VERIFICATION_AGENT_ACCOUNT_ID || 'broadcast'}) for escrow ${escrowId}, CID: ${deliveryCID}`);
     console.log(`[WorkerAgent] ⏳ Waiting for VerificationAgent to verify and forward to ClientAgent...`);
-  } catch (error) {
+  } catch (error: any) {
     console.error('[WorkerAgent] Error delivering work:', error);
   }
 }
@@ -459,7 +482,7 @@ async function deliverWork(escrowId) {
  * GET /work (also /api/worker/work)
  * List accepted work
  */
-app.get(['/work', '/api/worker/work'], (req, res) => {
+app.get(['/work', '/api/worker/work'], (req: Request, res: Response) => {
   const work = Array.from(acceptedWork.values());
   res.json({ count: work.length, work });
 });
@@ -468,7 +491,7 @@ app.get(['/work', '/api/worker/work'], (req, res) => {
  * GET /available-jobs (also /api/worker/available-jobs)
  * List available jobs
  */
-app.get(['/available-jobs', '/api/worker/available-jobs'], (req, res) => {
+app.get(['/available-jobs', '/api/worker/available-jobs'], (req: Request, res: Response) => {
   const jobs = Array.from(availableJobs.values());
   res.json({ count: jobs.length, jobs });
 });
@@ -476,9 +499,9 @@ app.get(['/available-jobs', '/api/worker/available-jobs'], (req, res) => {
 /**
  * Initialize WorkerAgent
  */
-async function init() {
+export async function init(): Promise<void> {
   // Connect to A2A message bus
-  await initA2A(null, { agentName: 'WorkerAgent' });
+  await initA2A(undefined, { agentName: 'WorkerAgent' });
   
   // Subscribe to job postings (JobOfferRequest messages)
   subscribe('aexowork.jobs', handleJobPost);
@@ -500,5 +523,5 @@ if (require.main === module) {
   init().catch(console.error);
 }
 
-module.exports = { app, init };
+export { app };
 

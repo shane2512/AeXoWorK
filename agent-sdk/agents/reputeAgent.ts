@@ -1,9 +1,9 @@
-require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
-const express = require('express');
-const { ethers } = require('ethers');
-const { signJSON } = require('../lib/signer');
-const { sendA2A, subscribe, init: initA2A } = require('../lib/a2a');
-const axios = require('axios');
+import 'dotenv/config';
+import express, { Request, Response, NextFunction } from 'express';
+import { ethers } from 'ethers';
+import { signJSON } from '../lib/signer';
+import { sendA2A, subscribe, init as initA2A } from '../lib/a2a';
+import axios from 'axios';
 
 /**
  * ReputeAgent - Reputation Management System
@@ -20,7 +20,7 @@ const app = express();
 app.use(express.json());
 
 // CORS middleware
-app.use((req, res, next) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -30,9 +30,56 @@ app.use((req, res, next) => {
   next();
 });
 
+// Type definitions
+interface UserStats {
+  totalJobs?: number;
+  successfulJobs?: number;
+  totalResponseTime?: number;
+  qualityRatings?: number[];
+  stakedRepute?: number;
+  accountAge?: number;
+  reputationScore?: number;
+}
+
+interface ReputationResult {
+  reputationScore: number;
+  breakdown: {
+    successRate: number;
+    responseScore: number;
+    qualityScore: number;
+    consistencyScore: number;
+    stakingBonus: number;
+  };
+  metadata: {
+    totalJobs: number;
+    successfulJobs: number;
+    avgResponseTime: number;
+    avgQuality: number;
+    stakedRepute: number;
+    qualityRatings?: number[];
+  };
+  calculatedAt?: number;
+  tokenBalance?: number;
+  staked?: number;
+}
+
+interface Badge {
+  type: number;
+  name: string;
+  description?: string;
+  proof?: string;
+  criteria?: string;
+}
+
+interface BadgeIssuance {
+  badge: string;
+  type: number;
+  issuedAt: number;
+}
+
 // In-memory reputation cache
-const reputationCache = new Map();
-const badgeIssuanceHistory = new Map();
+const reputationCache = new Map<string, ReputationResult>();
+const badgeIssuanceHistory = new Map<string, BadgeIssuance[]>();
 
 // Reputation scoring weights
 const REPUTATION_WEIGHTS = {
@@ -61,7 +108,7 @@ const BADGE_CRITERIA = {
 /**
  * GET / - Health check
  */
-app.get('/', (req, res) => {
+app.get('/', (req: Request, res: Response) => {
   res.json({
     status: 'running',
     agent: 'ReputeAgent',
@@ -87,10 +134,8 @@ app.get('/', (req, res) => {
 
 /**
  * Calculate multi-dimensional reputation score
- * @param {Object} userStats - User's statistics
- * @returns {Object} Reputation breakdown and score
  */
-function calculateReputation(userStats) {
+export function calculateReputation(userStats: UserStats): ReputationResult {
   const {
     totalJobs = 0,
     successfulJobs = 0,
@@ -141,22 +186,20 @@ function calculateReputation(userStats) {
       successfulJobs,
       avgResponseTime: Math.round(avgResponseTime),
       avgQuality: Math.round(qualityScore),
-      stakedRepute
+      stakedRepute,
+      qualityRatings
     }
   };
 }
 
 /**
  * Check if user qualifies for badges
- * @param {Object} userStats - User statistics
- * @param {String} address - User address
- * @returns {Array} Qualified badge types
  */
-async function checkBadgeEligibility(userStats, address) {
-  const qualified = [];
+async function checkBadgeEligibility(userStats: UserStats, address: string): Promise<Badge[]> {
+  const qualified: Badge[] = [];
 
   // First Job
-  if (userStats.totalJobs >= BADGE_CRITERIA.FIRST_JOB.jobs) {
+  if ((userStats.totalJobs || 0) >= BADGE_CRITERIA.FIRST_JOB.jobs) {
     qualified.push({
       type: BADGE_CRITERIA.FIRST_JOB.type,
       name: 'First Job Complete',
@@ -165,7 +208,7 @@ async function checkBadgeEligibility(userStats, address) {
   }
 
   // Ten Jobs
-  if (userStats.totalJobs >= BADGE_CRITERIA.TEN_JOBS.jobs) {
+  if ((userStats.totalJobs || 0) >= BADGE_CRITERIA.TEN_JOBS.jobs) {
     qualified.push({
       type: BADGE_CRITERIA.TEN_JOBS.type,
       name: '10 Jobs Milestone',
@@ -174,7 +217,7 @@ async function checkBadgeEligibility(userStats, address) {
   }
 
   // Top Rated
-  if (userStats.reputationScore >= BADGE_CRITERIA.TOP_RATED.score) {
+  if ((userStats.reputationScore || 0) >= BADGE_CRITERIA.TOP_RATED.score) {
     qualified.push({
       type: BADGE_CRITERIA.TOP_RATED.type,
       name: 'Top Rated',
@@ -183,11 +226,11 @@ async function checkBadgeEligibility(userStats, address) {
   }
 
   // Reliable
-  const successRate = userStats.totalJobs > 0
-    ? userStats.successfulJobs / userStats.totalJobs
+  const successRate = (userStats.totalJobs || 0) > 0
+    ? (userStats.successfulJobs || 0) / (userStats.totalJobs || 1)
     : 0;
   if (successRate >= BADGE_CRITERIA.RELIABLE.successRate &&
-      userStats.totalJobs >= BADGE_CRITERIA.RELIABLE.jobs) {
+      (userStats.totalJobs || 0) >= BADGE_CRITERIA.RELIABLE.jobs) {
     qualified.push({
       type: BADGE_CRITERIA.RELIABLE.type,
       name: 'Reliable',
@@ -200,14 +243,16 @@ async function checkBadgeEligibility(userStats, address) {
 
 /**
  * Issue reputation tokens to user
- * @param {String} address - User address
- * @param {Number} amount - Amount of REPUTE tokens
- * @param {String} reason - Reason for minting
  */
-async function mintReputationTokens(address, amount, reason) {
+async function mintReputationTokens(address: string, amount: number, reason: string): Promise<boolean> {
   try {
     const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_RPC_URL || process.env.HEDERA_JSON_RPC_RELAY || 'https://testnet.hashio.io/api');
     const wallet = process.env.HEDERA_PRIVATE_KEY ? new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY, provider) : null;
+
+    if (!wallet || !process.env.REPUTATION_TOKEN_ADDRESS) {
+      console.warn('[ReputeAgent] Wallet or token address not configured');
+      return false;
+    }
 
     const tokenAbi = [
       'function mintReputation(address to, uint256 amount, string reason) external'
@@ -229,7 +274,7 @@ async function mintReputationTokens(address, amount, reason) {
     console.log(`[ReputeAgent] Minted ${amount} REPUTE to ${address}: ${reason}`);
 
     return true;
-  } catch (error) {
+  } catch (error: any) {
     console.error('[ReputeAgent] Error minting tokens:', error.message);
     return false;
   }
@@ -237,13 +282,16 @@ async function mintReputationTokens(address, amount, reason) {
 
 /**
  * Issue NFT badge to user
- * @param {String} address - User address
- * @param {Object} badge - Badge details
  */
-async function issueBadge(address, badge) {
+export async function issueBadge(address: string, badge: Badge): Promise<boolean> {
   try {
     const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_RPC_URL || process.env.HEDERA_JSON_RPC_RELAY || 'https://testnet.hashio.io/api');
     const wallet = process.env.HEDERA_PRIVATE_KEY ? new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY, provider) : null;
+
+    if (!wallet || !process.env.BADGE_NFT_ADDRESS) {
+      console.warn('[ReputeAgent] Wallet or badge NFT address not configured');
+      return false;
+    }
 
     const badgeAbi = [
       'function issueBadge(address recipient, uint8 badgeType, string name, string description, string tokenURI, string criteriaMetURI, bool soulbound) external returns (uint256)',
@@ -280,14 +328,14 @@ async function issueBadge(address, badge) {
     if (!badgeIssuanceHistory.has(address)) {
       badgeIssuanceHistory.set(address, []);
     }
-    badgeIssuanceHistory.get(address).push({
+    badgeIssuanceHistory.get(address)!.push({
       badge: badge.name,
       type: badge.type,
       issuedAt: Date.now()
     });
 
     return true;
-  } catch (error) {
+  } catch (error: any) {
     console.error(`[ReputeAgent] Error issuing badge:`, error.message);
     return false;
   }
@@ -297,7 +345,7 @@ async function issueBadge(address, badge) {
  * POST /calculate-reputation
  * Calculate reputation score for a user
  */
-app.post('/calculate-reputation', async (req, res) => {
+app.post('/calculate-reputation', async (req: Request, res: Response) => {
   try {
     const { address, userStats } = req.body;
 
@@ -318,7 +366,7 @@ app.post('/calculate-reputation', async (req, res) => {
       address,
       ...reputation
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('[ReputeAgent] Error calculating reputation:', error);
     res.status(500).json({ error: error.message });
   }
@@ -328,7 +376,7 @@ app.post('/calculate-reputation', async (req, res) => {
  * POST /issue-badge
  * Manually issue a badge
  */
-app.post('/issue-badge', async (req, res) => {
+app.post('/issue-badge', async (req: Request, res: Response) => {
   try {
     const { address, badgeType, name, description } = req.body;
 
@@ -336,7 +384,7 @@ app.post('/issue-badge', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const badge = {
+    const badge: Badge = {
       type: badgeType,
       name: name || 'Achievement Badge',
       description: description || 'Earned achievement badge',
@@ -354,7 +402,7 @@ app.post('/issue-badge', async (req, res) => {
     } else {
       res.status(400).json({ error: 'Badge already exists or failed to issue' });
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('[ReputeAgent] Error issuing badge:', error);
     res.status(500).json({ error: error.message });
   }
@@ -364,7 +412,7 @@ app.post('/issue-badge', async (req, res) => {
  * GET /reputation/:address
  * Get reputation score for a user
  */
-app.get('/reputation/:address', (req, res) => {
+app.get('/reputation/:address', (req: Request, res: Response) => {
   const { address } = req.params;
   const cached = reputationCache.get(address);
 
@@ -403,7 +451,7 @@ app.get('/reputation/:address', (req, res) => {
  * POST /update-reputation
  * Update reputation after job completion (called by other agents)
  */
-app.post('/update-reputation', async (req, res) => {
+app.post('/update-reputation', async (req: Request, res: Response) => {
   try {
     const { address, jobSuccess, responseTime, qualityRating } = req.body;
 
@@ -417,19 +465,28 @@ app.post('/update-reputation', async (req, res) => {
         totalJobs: 0,
         successfulJobs: 0,
         avgResponseTime: 0,
-        qualityRatings: []
+        qualityRatings: [],
+        stakedRepute: 0
       }
     };
 
     // Update stats
-    const userStats = {
-      totalJobs: cached.metadata.totalJobs + 1,
-      successfulJobs: cached.metadata.successfulJobs + (jobSuccess ? 1 : 0),
-      totalResponseTime: (cached.metadata.avgResponseTime * cached.metadata.totalJobs) + (responseTime || 24),
-      qualityRatings: [...(cached.metadata.qualityRatings || []), qualityRating || 75],
-      stakedRepute: cached.metadata.stakedRepute || 0,
-      accountAge: cached.metadata.accountAge || Date.now() - (30 * 24 * 60 * 60 * 1000)
+    const previousTotalJobs = cached.metadata?.totalJobs || 0;
+    const previousAvgResponseTime = cached.metadata?.avgResponseTime || 0;
+    const previousTotalResponseTime = previousAvgResponseTime * previousTotalJobs; // Calculate previous total
+    
+    const userStats: UserStats = {
+      totalJobs: previousTotalJobs + 1,
+      successfulJobs: (cached.metadata?.successfulJobs || 0) + (jobSuccess ? 1 : 0),
+      totalResponseTime: previousTotalResponseTime + (responseTime || 24), // Add new response time to total
+      qualityRatings: [...(cached.metadata?.qualityRatings || []), qualityRating || 75],
+      stakedRepute: cached.metadata?.stakedRepute || 0,
+      accountAge: (cached as any).accountAge || Date.now() - (30 * 24 * 60 * 60 * 1000)
     };
+    
+    console.log(`[ReputeAgent] 📊 Updating reputation for ${address}:`);
+    console.log(`[ReputeAgent]    Previous: ${previousTotalJobs} jobs, ${previousAvgResponseTime.toFixed(1)}h avg response`);
+    console.log(`[ReputeAgent]    New: ${userStats.totalJobs} jobs, ${userStats.successfulJobs} successful, ${responseTime || 24}h response time`);
 
     // Recalculate reputation
     const reputation = calculateReputation(userStats);
@@ -462,7 +519,7 @@ app.post('/update-reputation', async (req, res) => {
       ...reputation,
       badgesEarned: qualifiedBadges.length
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('[ReputeAgent] Error updating reputation:', error);
     res.status(500).json({ error: error.message });
   }
@@ -471,97 +528,206 @@ app.post('/update-reputation', async (req, res) => {
 /**
  * Initialize ReputeAgent
  */
-async function init() {
+export async function init(): Promise<void> {
   console.log('[ReputeAgent] Starting...');
 
   // Connect to A2A message bus
-  await initA2A(null, { agentName: 'ReputeAgent' });
+  await initA2A(undefined, { agentName: 'ReputeAgent' });
   
   // Wait a bit for connection to stabilize
   await new Promise(resolve => setTimeout(resolve, 500));
 
   // Subscribe to reputation update events from ClientAgent
   console.log('[ReputeAgent] 📡 Subscribing to aexowork.reputation.updates...');
-  subscribe('aexowork.reputation.updates', async (msg) => {
+  subscribe('aexowork.reputation.updates', async (msg: any) => {
+    const startTime = Date.now();
+    console.log(`[ReputeAgent] 📨 Received message on aexowork.reputation.updates at ${new Date().toISOString()}:`, {
+      type: msg.type,
+      escrowId: msg.escrowId,
+      worker: msg.worker,
+      client: msg.client,
+      scores: msg.scores
+    });
+    
     if (msg.type === 'reputation.update') {
-      console.log(`[ReputeAgent] 📨 Received reputation update for escrow ${msg.escrowId}`);
+      console.log(`[ReputeAgent] ✅ Processing reputation update for escrow ${msg.escrowId}`);
       console.log(`[ReputeAgent]    Worker: ${msg.worker}`);
       console.log(`[ReputeAgent]    Client: ${msg.client}`);
-      console.log(`[ReputeAgent]    Scores:`, msg.scores);
+      console.log(`[ReputeAgent]    Scores:`, JSON.stringify(msg.scores));
       
       try {
         // Update worker reputation
         if (msg.worker && msg.worker !== 'unknown') {
           // Normalize address - handle DID format or Ethereum address
           let workerAddress = msg.worker;
+          
+          // If it's a DID, try to extract address or use DID as-is
           if (workerAddress.startsWith('did:')) {
-            // Extract address from DID if possible, or use DID as-is
             console.log(`[ReputeAgent] ⚠️  Worker address is a DID: ${workerAddress}, using as-is`);
+          } else if (!workerAddress.startsWith('0x')) {
+            // Not a valid Ethereum address, skip
+            console.warn(`[ReputeAgent] ⚠️  Worker address format not recognized: ${workerAddress}`);
+            workerAddress = null;
           }
           
-          const workerUpdate = {
-            address: workerAddress,
-            jobSuccess: true,
-            responseTime: 24, // Default response time in hours
-            qualityRating: msg.scores.worker * 15 // Convert score to rating (5 * 15 = 75)
-          };
-          
-          console.log(`[ReputeAgent] 📝 Updating worker reputation for: ${workerAddress}`);
-          
-          // Call update-reputation endpoint internally
-          const updateResponse = await axios.post(`http://localhost:${process.env.REPUTE_AGENT_PORT || 3004}/update-reputation`, workerUpdate).catch(err => {
-            console.error(`[ReputeAgent] ❌ Could not update worker reputation via HTTP: ${err.message}`);
-            if (err.response) {
-              console.error(`[ReputeAgent]    Response: ${JSON.stringify(err.response.data)}`);
-            }
-            return null;
-          });
-          
-          if (updateResponse && updateResponse.data) {
-            console.log(`[ReputeAgent] ✅ Updated worker reputation: ${workerAddress}`);
-            console.log(`[ReputeAgent]    New score: ${updateResponse.data.reputationScore || 'N/A'}`);
-            console.log(`[ReputeAgent]    Total jobs: ${updateResponse.data.metadata?.totalJobs || 'N/A'}`);
-          } else {
-            console.warn(`[ReputeAgent] ⚠️  No response from update-reputation endpoint for worker`);
+          if (workerAddress) {
+            const workerUpdate = {
+              address: workerAddress,
+              jobSuccess: true,
+              responseTime: 24, // Default response time in hours
+              qualityRating: msg.scores.worker * 15 // Convert score to rating (5 * 15 = 75)
+            };
+            
+            console.log(`[ReputeAgent] 📝 Updating worker reputation for: ${workerAddress}`);
+            
+            // Update reputation directly (faster than HTTP call to self)
+            console.log(`[ReputeAgent] 📝 Updating worker reputation directly for: ${workerAddress}`);
+            const updateStartTime = Date.now();
+            
+            // Get current stats
+            const cached = reputationCache.get(workerAddress) || {
+              metadata: {
+                totalJobs: 0,
+                successfulJobs: 0,
+                avgResponseTime: 0,
+                qualityRatings: [],
+                stakedRepute: 0
+              }
+            };
+
+            // Update stats
+            const previousTotalJobs = cached.metadata?.totalJobs || 0;
+            const previousAvgResponseTime = cached.metadata?.avgResponseTime || 0;
+            const previousTotalResponseTime = previousAvgResponseTime * previousTotalJobs;
+            
+            const userStats: UserStats = {
+              totalJobs: previousTotalJobs + 1,
+              successfulJobs: (cached.metadata?.successfulJobs || 0) + 1,
+              totalResponseTime: previousTotalResponseTime + (workerUpdate.responseTime || 24),
+              qualityRatings: [...(cached.metadata?.qualityRatings || []), workerUpdate.qualityRating || 75],
+              stakedRepute: cached.metadata?.stakedRepute || 0,
+              accountAge: (cached as any).accountAge || Date.now() - (30 * 24 * 60 * 60 * 1000)
+            };
+            
+            // Recalculate reputation
+            const reputation = calculateReputation(userStats);
+            reputation.metadata.qualityRatings = userStats.qualityRatings;
+
+            // Cache updated reputation
+            reputationCache.set(workerAddress, {
+              ...reputation,
+              calculatedAt: Date.now()
+            });
+            
+            const updateTime = Date.now() - updateStartTime;
+            console.log(`[ReputeAgent] ✅ Updated worker reputation: ${workerAddress} (took ${updateTime}ms)`);
+            console.log(`[ReputeAgent]    New score: ${reputation.reputationScore}`);
+            console.log(`[ReputeAgent]    Total jobs: ${reputation.metadata.totalJobs}`);
+            console.log(`[ReputeAgent]    Successful jobs: ${reputation.metadata.successfulJobs}`);
           }
         } else {
           console.warn(`[ReputeAgent] ⚠️  Worker address is missing or 'unknown': ${msg.worker}`);
         }
         
         // Update client reputation
-        if (msg.client && msg.client !== 'unknown' && !msg.client.startsWith('did:')) {
-          const clientUpdate = {
-            address: msg.client,
-            jobSuccess: true,
-            responseTime: 12,
-            qualityRating: msg.scores.client * 15
-          };
+        if (msg.client && msg.client !== 'unknown') {
+          // Handle both DID and Ethereum addresses
+          let clientAddress = msg.client;
           
-          console.log(`[ReputeAgent] 📝 Updating client reputation for: ${msg.client}`);
+          if (clientAddress.startsWith('did:')) {
+            console.log(`[ReputeAgent] ⚠️  Client address is a DID: ${clientAddress}, using as-is`);
+          } else if (!clientAddress.startsWith('0x')) {
+            // Not a valid Ethereum address, skip
+            console.warn(`[ReputeAgent] ⚠️  Client address format not recognized: ${clientAddress}`);
+            clientAddress = null;
+          }
           
-          const updateResponse = await axios.post(`http://localhost:${process.env.REPUTE_AGENT_PORT || 3004}/update-reputation`, clientUpdate).catch(err => {
-            console.error(`[ReputeAgent] ❌ Could not update client reputation via HTTP: ${err.message}`);
-            return null;
-          });
-          
-          if (updateResponse && updateResponse.data) {
-            console.log(`[ReputeAgent] ✅ Updated client reputation: ${msg.client}`);
-            console.log(`[ReputeAgent]    New score: ${updateResponse.data.reputationScore || 'N/A'}`);
+          if (clientAddress) {
+            const clientUpdate = {
+              address: clientAddress,
+              jobSuccess: true,
+              responseTime: 12,
+              qualityRating: msg.scores.client * 15
+            };
+            
+            console.log(`[ReputeAgent] 📝 Updating client reputation directly for: ${clientAddress}`);
+            const clientUpdateStartTime = Date.now();
+            
+            // Get current stats
+            const clientCached = reputationCache.get(clientAddress) || {
+              metadata: {
+                totalJobs: 0,
+                successfulJobs: 0,
+                avgResponseTime: 0,
+                qualityRatings: [],
+                stakedRepute: 0
+              }
+            };
+
+            // Update stats
+            const clientPreviousTotalJobs = clientCached.metadata?.totalJobs || 0;
+            const clientPreviousAvgResponseTime = clientCached.metadata?.avgResponseTime || 0;
+            const clientPreviousTotalResponseTime = clientPreviousAvgResponseTime * clientPreviousTotalJobs;
+            
+            const clientUserStats: UserStats = {
+              totalJobs: clientPreviousTotalJobs + 1,
+              successfulJobs: (clientCached.metadata?.successfulJobs || 0) + 1,
+              totalResponseTime: clientPreviousTotalResponseTime + (clientUpdate.responseTime || 12),
+              qualityRatings: [...(clientCached.metadata?.qualityRatings || []), clientUpdate.qualityRating || 75],
+              stakedRepute: clientCached.metadata?.stakedRepute || 0,
+              accountAge: (clientCached as any).accountAge || Date.now() - (30 * 24 * 60 * 60 * 1000)
+            };
+            
+            // Recalculate reputation
+            const clientReputation = calculateReputation(clientUserStats);
+            clientReputation.metadata.qualityRatings = clientUserStats.qualityRatings;
+
+            // Cache updated reputation
+            reputationCache.set(clientAddress, {
+              ...clientReputation,
+              calculatedAt: Date.now()
+            });
+            
+            const clientUpdateTime = Date.now() - clientUpdateStartTime;
+            console.log(`[ReputeAgent] ✅ Updated client reputation: ${clientAddress} (took ${clientUpdateTime}ms)`);
+            console.log(`[ReputeAgent]    New score: ${clientReputation.reputationScore}`);
+            console.log(`[ReputeAgent]    Total jobs: ${clientReputation.metadata.totalJobs}`);
           }
         } else {
-          console.warn(`[ReputeAgent] ⚠️  Client address is missing, 'unknown', or DID format: ${msg.client}`);
+          console.warn(`[ReputeAgent] ⚠️  Client address is missing or 'unknown': ${msg.client}`);
         }
         
-        console.log(`[ReputeAgent] ✅ Reputation update processed for escrow ${msg.escrowId}`);
-      } catch (error) {
-        console.error(`[ReputeAgent] ❌ Error processing reputation update:`, error);
+        const totalTime = Date.now() - startTime;
+        console.log(`[ReputeAgent] ✅ Reputation update processed for escrow ${msg.escrowId} (total time: ${totalTime}ms)`);
+        
+        // Send confirmation back to ClientAgent (optional - for tracking)
+        try {
+          await sendA2A('aexowork.reputation.updated', {
+            type: 'reputation.updated',
+            escrowId: msg.escrowId,
+            worker: msg.worker,
+            client: msg.client,
+            processedAt: Date.now(),
+            processingTime: totalTime,
+            to: msg.fromAccountId || process.env.CLIENT_AGENT_ACCOUNT_ID
+          });
+          console.log(`[ReputeAgent] 📤 Sent confirmation to ClientAgent`);
+        } catch (confirmError: any) {
+          // Non-critical, just log
+          console.log(`[ReputeAgent] ⚠️  Could not send confirmation: ${confirmError.message}`);
+        }
+      } catch (error: any) {
+        const totalTime = Date.now() - startTime;
+        console.error(`[ReputeAgent] ❌ Error processing reputation update (after ${totalTime}ms):`, error);
         console.error(`[ReputeAgent]    Stack:`, error.stack);
       }
+    } else {
+      console.log(`[ReputeAgent] ⚠️  Ignoring message type: ${msg.type}`);
     }
   });
 
   // Subscribe to job completion events (legacy)
-  subscribe('aexowork.job.completed', async (msg) => {
+  subscribe('aexowork.job.completed', async (msg: any) => {
     if (msg.type === 'JobCompleted') {
       console.log(`[ReputeAgent] Job completed: ${msg.jobId}`);
       // Update reputation for both parties
@@ -570,7 +736,7 @@ async function init() {
   });
 
   // Start HTTP server
-  const port = process.env.REPUTE_AGENT_PORT || 3004;
+  const port = parseInt(process.env.REPUTE_AGENT_PORT || '3004', 10);
   app.listen(port, () => {
     console.log(`[ReputeAgent] Running on port ${port}`);
     console.log(`[ReputeAgent] Reputation Token: ${process.env.REPUTATION_TOKEN_ADDRESS}`);
@@ -583,5 +749,5 @@ if (require.main === module) {
   init().catch(console.error);
 }
 
-module.exports = { app, init, calculateReputation, issueBadge };
+export { app };
 

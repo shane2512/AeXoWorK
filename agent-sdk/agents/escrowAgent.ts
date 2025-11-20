@@ -1,19 +1,19 @@
 /**
  * EscrowAgent - A2A Protocol Compliant (Enhanced)
  * Automated escrow operations, milestone management, and auto-release
- * Based on: https://github.com/a2aproject/A2A
+ * Based: https://github.com/a2aproject/A2A
  */
 
-const express = require('express');
-const { ethers } = require('ethers');
-const { sendA2A, subscribe, init: initA2A } = require('../lib/a2a');
-require('dotenv').config();
+import express, { Request, Response, NextFunction } from 'express';
+import { ethers } from 'ethers';
+import { sendA2A, subscribe, init as initA2A } from '../lib/a2a';
+import 'dotenv/config';
 
 const app = express();
 app.use(express.json());
 
 // CORS middleware
-app.use((req, res, next) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -23,11 +23,57 @@ app.use((req, res, next) => {
   next();
 });
 
-const PORT = process.env.ESCROW_AGENT_PORT || 3007;
+const PORT = parseInt(process.env.ESCROW_AGENT_PORT || '3007', 10);
 let hcs10Initialized = false;
 
+// Type definitions
+interface AgentCard {
+  name: string;
+  version: string;
+  description: string;
+  capabilities: string[];
+  methods: Record<string, any>;
+  transport: string;
+  endpoint: string;
+  protocols: string[];
+}
+
+interface Escrow {
+  id: string | number;
+  jobId?: string;
+  client: string;
+  worker?: string;
+  freelancer?: string;
+  amount?: string;
+  totalAmount?: string;
+  description?: string;
+  status: string;
+  autoRelease?: boolean;
+  createdAt: number;
+  onChainTx?: string;
+  releasedAt?: number;
+  releaseTxHash?: string;
+  milestonesCount?: number;
+}
+
+interface Milestone {
+  index: number;
+  title: string;
+  description: string;
+  amount: string;
+  deadline: number;
+  completed: boolean;
+  approved: boolean;
+  released: boolean;
+}
+
+interface AutoReleaseQueueItem {
+  escrowId: string;
+  awaitingVerification: boolean;
+}
+
 // A2A Agent Card - Protocol Compliance
-const AGENT_CARD = {
+const AGENT_CARD: AgentCard = {
   name: 'EscrowAgent',
   version: '2.0.0',
   description: 'A2A-compliant enhanced escrow agent with automated operations and milestone management',
@@ -80,21 +126,21 @@ const AGENT_CARD = {
 
 // Hedera connection
 const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_JSON_RPC_RELAY || process.env.HEDERA_RPC_URL || 'https://testnet.hashio.io/api');
-let wallet = null;
+let wallet: ethers.Wallet | null = null;
 if (process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY) {
-  wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY, provider);
+  wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY!, provider);
 } else {
   console.warn('[EscrowAgent] No private key found. Wallet operations will be limited.');
 }
 
 // Contract connections
-let escrowManagerContract;
-let milestoneEscrowContract;
+let escrowManagerContract: ethers.Contract | null = null;
+let milestoneEscrowContract: ethers.Contract | null = null;
 
 // In-memory escrow tracking
-const escrows = new Map();
-const milestones = new Map();
-const autoReleaseQueue = new Map();
+const escrows = new Map<string | number, Escrow>();
+const milestones = new Map<string, Milestone[]>();
+const autoReleaseQueue = new Map<string, AutoReleaseQueueItem>();
 
 // Escrow status
 const EscrowStatus = {
@@ -104,12 +150,9 @@ const EscrowStatus = {
   COMPLETED: 'completed',
   REFUNDED: 'refunded',
   DISPUTED: 'disputed'
-};
+} as const;
 
-// NATS connection
-let nc;
-
-async function initContracts() {
+async function initContracts(): Promise<void> {
   try {
     const escrowManagerAddress = process.env.ESCROW_MANAGER_ADDRESS;
     if (!escrowManagerAddress) {
@@ -158,33 +201,33 @@ async function initContracts() {
     }
 
     console.log('✅ Escrow contracts initialized');
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Contract initialization error:', error.message);
   }
 }
 
-async function initHCS10Connection() {
+async function initHCS10Connection(): Promise<void> {
   try {
-    await initA2A(null, { agentName: 'EscrowAgent' });
+    await initA2A(undefined, { agentName: 'EscrowAgent' });
     hcs10Initialized = true;
     console.log('✅ Connected to HCS-10 network');
 
     // Subscribe to A2A channels using HCS-10
-    subscribe('aexowork.escrow.requests', async (data) => {
+    subscribe('aexowork.escrow.requests', async (data: any) => {
       try {
         console.log('[A2A] Escrow request received:', data.jobId);
         await handleEscrowRequest(data);
-      } catch (error) {
+      } catch (error: any) {
         console.error('[A2A] Escrow request handling error:', error);
       }
     });
 
-    subscribe('aexowork.escrow.created', async (data) => {
+    subscribe('aexowork.escrow.created', async (data: any) => {
       try {
         console.log('[A2A] Escrow created notification:', data.escrowId);
         
         // Store escrow info for tracking
-        const escrow = {
+        const escrow: Escrow = {
           id: data.escrowId,
           jobId: data.jobId,
           client: data.client,
@@ -208,12 +251,12 @@ async function initHCS10Connection() {
         }
         
         console.log(`✅ Escrow tracked: ${data.escrowId} - ${data.amount} HBAR`);
-      } catch (error) {
+      } catch (error: any) {
         console.error('[A2A] Escrow created notification error:', error);
       }
     });
 
-    subscribe('aexowork.escrow.released', async (data) => {
+    subscribe('aexowork.escrow.released', async (data: any) => {
       try {
         console.log('[A2A] Escrow released notification:', data.escrowId);
         
@@ -238,7 +281,7 @@ async function initHCS10Connection() {
           escrows.set(escrow.id || escrowIdStr, escrow);
           
           // Remove from auto-release queue if present
-          autoReleaseQueue.delete(escrow.id || escrowIdStr);
+          autoReleaseQueue.delete(escrow.id?.toString() || escrowIdStr);
           
           console.log(`✅ Escrow status updated to COMPLETED: ${data.escrowId}`);
           console.log(`   Released to: ${data.worker}`);
@@ -246,37 +289,37 @@ async function initHCS10Connection() {
         } else {
           console.warn(`⚠️  Escrow ${data.escrowId} not found in tracking, but release notification received`);
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('[A2A] Escrow released notification error:', error);
       }
     });
 
-    subscribe('aexowork.verification.complete', async (data) => {
+    subscribe('aexowork.verification.complete', async (data: any) => {
       try {
         console.log('[A2A] Verification complete:', data.escrowId);
         await handleAutoRelease(data);
-      } catch (error) {
+      } catch (error: any) {
         console.error('[A2A] Auto-release error:', error);
       }
     });
 
-    subscribe('aexowork.milestone.complete', async (data) => {
+    subscribe('aexowork.milestone.complete', async (data: any) => {
       try {
         console.log('[A2A] Milestone complete:', data.escrowId, data.milestoneIndex);
         await handleMilestoneComplete(data);
-      } catch (error) {
+      } catch (error: any) {
         console.error('[A2A] Milestone handling error:', error);
       }
     });
 
     console.log('[A2A] Subscribed to escrow channels');
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ HCS-10 connection failed:', error.message);
   }
 }
 
 // A2A Protocol: Health check & Agent Card
-app.get('/', (req, res) => {
+app.get('/', (req: Request, res: Response) => {
   res.json({
     status: 'running',
     agent: 'EscrowAgent',
@@ -287,7 +330,7 @@ app.get('/', (req, res) => {
       totalEscrows: escrows.size,
       active: Array.from(escrows.values()).filter(e => e.status === EscrowStatus.IN_PROGRESS).length,
       completed: Array.from(escrows.values()).filter(e => e.status === EscrowStatus.COMPLETED).length,
-      totalValue: Array.from(escrows.values()).reduce((sum, e) => sum + parseFloat(e.amount), 0),
+      totalValue: Array.from(escrows.values()).reduce((sum, e) => sum + parseFloat(e.amount || '0'), 0),
       autoReleaseQueue: autoReleaseQueue.size
     },
     contracts: {
@@ -298,14 +341,18 @@ app.get('/', (req, res) => {
 });
 
 // A2A Protocol: Get Agent Card
-app.get('/agent-card', (req, res) => {
+app.get('/agent-card', (req: Request, res: Response) => {
   res.json(AGENT_CARD);
 });
 
 // Create standard escrow (A2A method: escrow.create)
-app.post(['/create-escrow', '/api/escrow/create'], async (req, res) => {
+app.post(['/create-escrow', '/api/escrow/create'], async (req: Request, res: Response) => {
   try {
     const { jobId, client, worker, amount, description, autoRelease } = req.body;
+
+    if (!escrowManagerContract) {
+      return res.status(500).json({ error: 'EscrowManager contract not initialized' });
+    }
 
     const amountWei = ethers.utils.parseEther(amount.toString());
 
@@ -317,16 +364,14 @@ app.post(['/create-escrow', '/api/escrow/create'], async (req, res) => {
     const receipt = await tx.wait();
 
     // Extract escrow ID from events
-    let escrowId;
-    const escrowCreatedEvent = receipt.events?.find(e => e.event === 'EscrowCreated');
+    let escrowId: string | number = `escrow_${Date.now()}`;
+    const escrowCreatedEvent = receipt.events?.find((e: any) => e.event === 'EscrowCreated');
     if (escrowCreatedEvent) {
       escrowId = escrowCreatedEvent.args.escrowId.toNumber();
-    } else {
-      escrowId = `escrow_${Date.now()}`;
     }
 
     // Store escrow info
-    const escrow = {
+    const escrow: Escrow = {
       id: escrowId,
       jobId,
       client: client || (wallet ? wallet.address : '0x0000000000000000000000000000000000000000'),
@@ -343,8 +388,8 @@ app.post(['/create-escrow', '/api/escrow/create'], async (req, res) => {
 
     // Add to auto-release queue if enabled
     if (autoRelease) {
-      autoReleaseQueue.set(escrowId, {
-        escrowId,
+      autoReleaseQueue.set(escrowId.toString(), {
+        escrowId: escrowId.toString(),
         awaitingVerification: true
       });
     }
@@ -374,25 +419,29 @@ app.post(['/create-escrow', '/api/escrow/create'], async (req, res) => {
       onChainTx: tx.hash,
       message: 'Escrow created and funded'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error creating escrow:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Create milestone-based escrow (A2A method: escrow.create with milestones)
-app.post(['/create-milestone-escrow', '/api/escrow/milestone/create'], async (req, res) => {
+app.post(['/create-milestone-escrow', '/api/escrow/milestone/create'], async (req: Request, res: Response) => {
   try {
     const { jobId, client, freelancer, milestones: milestonesData } = req.body;
+
+    if (!milestoneEscrowContract) {
+      return res.status(500).json({ error: 'MilestoneEscrow contract not initialized' });
+    }
 
     // Generate escrow ID
     const escrowId = ethers.utils.id(`escrow_${jobId}_${Date.now()}`);
 
     // Parse milestones
-    const titles = milestonesData.map(m => m.title);
-    const descriptions = milestonesData.map(m => m.description);
-    const amounts = milestonesData.map(m => ethers.utils.parseEther(m.amount.toString()));
-    const deadlines = milestonesData.map(m => Math.floor(m.deadline / 1000)); // Convert to seconds
+    const titles = milestonesData.map((m: any) => m.title);
+    const descriptions = milestonesData.map((m: any) => m.description);
+    const amounts = milestonesData.map((m: any) => ethers.utils.parseEther(m.amount.toString()));
+    const deadlines = milestonesData.map((m: any) => Math.floor(m.deadline / 1000)); // Convert to seconds
 
     const totalAmount = amounts.reduce((sum, amt) => sum.add(amt), ethers.BigNumber.from(0));
 
@@ -413,7 +462,7 @@ app.post(['/create-milestone-escrow', '/api/escrow/milestone/create'], async (re
     await tx.wait();
 
     // Store escrow info
-    const escrow = {
+    const escrow: Escrow = {
       id: escrowId,
       jobId,
       client: client || (wallet ? wallet.address : '0x0000000000000000000000000000000000000000'),
@@ -428,7 +477,7 @@ app.post(['/create-milestone-escrow', '/api/escrow/milestone/create'], async (re
     escrows.set(escrowId, escrow);
 
     // Store milestones
-    milestones.set(escrowId, milestonesData.map((m, idx) => ({
+    milestones.set(escrowId, milestonesData.map((m: any, idx: number) => ({
       index: idx,
       title: m.title,
       description: m.description,
@@ -464,16 +513,20 @@ app.post(['/create-milestone-escrow', '/api/escrow/milestone/create'], async (re
       onChainTx: tx.hash,
       message: 'Milestone escrow created'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error creating milestone escrow:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Release payment (A2A method: escrow.release)
-app.post(['/release', '/api/escrow/release'], async (req, res) => {
+app.post(['/release', '/api/escrow/release'], async (req: Request, res: Response) => {
   try {
     const { escrowId } = req.body;
+
+    if (!escrowManagerContract) {
+      return res.status(500).json({ error: 'EscrowManager contract not initialized' });
+    }
 
     const escrow = escrows.get(parseInt(escrowId));
     if (!escrow) {
@@ -513,16 +566,20 @@ app.post(['/release', '/api/escrow/release'], async (req, res) => {
       amount: escrow.amount,
       message: 'Payment released to worker'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error releasing escrow:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Complete milestone (A2A method: escrow.milestone.complete)
-app.post(['/milestone/complete', '/api/escrow/milestone/complete'], async (req, res) => {
+app.post(['/milestone/complete', '/api/escrow/milestone/complete'], async (req: Request, res: Response) => {
   try {
     const { escrowId, milestoneIndex } = req.body;
+
+    if (!milestoneEscrowContract) {
+      return res.status(500).json({ error: 'MilestoneEscrow contract not initialized' });
+    }
 
     // Complete on-chain
     const tx = await milestoneEscrowContract.completeMilestone(escrowId, milestoneIndex, {
@@ -545,16 +602,20 @@ app.post(['/milestone/complete', '/api/escrow/milestone/complete'], async (req, 
       milestoneIndex,
       message: 'Milestone marked as complete'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error completing milestone:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Approve and release milestone
-app.post(['/milestone/approve', '/api/escrow/milestone/approve'], async (req, res) => {
+app.post(['/milestone/approve', '/api/escrow/milestone/approve'], async (req: Request, res: Response) => {
   try {
     const { escrowId, milestoneIndex } = req.body;
+
+    if (!milestoneEscrowContract) {
+      return res.status(500).json({ error: 'MilestoneEscrow contract not initialized' });
+    }
 
     // Approve on-chain
     const tx = await milestoneEscrowContract.approveMilestone(escrowId, milestoneIndex, {
@@ -588,14 +649,14 @@ app.post(['/milestone/approve', '/api/escrow/milestone/approve'], async (req, re
       milestoneIndex,
       message: 'Milestone approved and payment released'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error approving milestone:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Get escrow details
-app.get(['/escrow/:escrowId', '/api/escrow/:escrowId'], (req, res) => {
+app.get(['/escrow/:escrowId', '/api/escrow/:escrowId'], (req: Request, res: Response) => {
   const { escrowId } = req.params;
   const escrow = escrows.get(parseInt(escrowId)) || escrows.get(escrowId);
 
@@ -612,7 +673,7 @@ app.get(['/escrow/:escrowId', '/api/escrow/:escrowId'], (req, res) => {
 });
 
 // List all escrows
-app.get(['/escrows', '/api/escrows'], (req, res) => {
+app.get(['/escrows', '/api/escrows'], (req: Request, res: Response) => {
   const { status, client, worker } = req.query;
 
   let escrowList = Array.from(escrows.values());
@@ -622,11 +683,11 @@ app.get(['/escrows', '/api/escrows'], (req, res) => {
   }
 
   if (client) {
-    escrowList = escrowList.filter(e => e.client.toLowerCase() === client.toLowerCase());
+    escrowList = escrowList.filter(e => e.client.toLowerCase() === (client as string).toLowerCase());
   }
 
   if (worker) {
-    escrowList = escrowList.filter(e => e.worker && e.worker.toLowerCase() === worker.toLowerCase());
+    escrowList = escrowList.filter(e => e.worker && e.worker.toLowerCase() === (worker as string).toLowerCase());
   }
 
   res.json({
@@ -636,13 +697,18 @@ app.get(['/escrows', '/api/escrows'], (req, res) => {
 });
 
 // A2A: Handle escrow request from another agent
-async function handleEscrowRequest(data) {
+async function handleEscrowRequest(data: any): Promise<void> {
   const { jobId, client, worker, amount, autoRelease, from } = data;
+
+  if (!escrowManagerContract) {
+    console.error('❌ EscrowManager contract not initialized');
+    return;
+  }
 
   try {
     // Auto-create escrow
     // Handle amount conversion - ensure it's a valid number string
-    let amountWei;
+    let amountWei: ethers.BigNumber;
     if (typeof amount === 'string' && amount.includes('e')) {
       // Handle scientific notation by converting to fixed decimal
       const numAmount = parseFloat(amount);
@@ -661,9 +727,9 @@ async function handleEscrowRequest(data) {
     });
 
     const receipt = await tx.wait();
-    let escrowId = `escrow_${Date.now()}`;
+    let escrowId: string | number = `escrow_${Date.now()}`;
 
-    const escrowCreatedEvent = receipt.events?.find(e => e.event === 'EscrowCreated');
+    const escrowCreatedEvent = receipt.events?.find((e: any) => e.event === 'EscrowCreated');
     if (escrowCreatedEvent) {
       escrowId = escrowCreatedEvent.args.escrowId.toNumber();
     }
@@ -682,14 +748,19 @@ async function handleEscrowRequest(data) {
     }
 
     console.log(`✅ A2A escrow created: ${escrowId}`);
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ A2A escrow creation failed:', error);
   }
 }
 
 // A2A: Handle auto-release based on verification
-async function handleAutoRelease(data) {
+async function handleAutoRelease(data: any): Promise<void> {
   const { escrowId, passed, score } = data;
+
+  if (!escrowManagerContract) {
+    console.error('❌ EscrowManager contract not initialized');
+    return;
+  }
 
   const autoRelease = autoReleaseQueue.get(escrowId);
   if (!autoRelease) {
@@ -727,14 +798,19 @@ async function handleAutoRelease(data) {
         timestamp: Date.now()
       });
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error(`❌ Auto-release failed for ${escrowId}:`, error);
   }
 }
 
 // A2A: Handle milestone completion
-async function handleMilestoneCompletion(data) {
+async function handleMilestoneComplete(data: any): Promise<void> {
   const { escrowId, milestoneIndex } = data;
+
+  if (!milestoneEscrowContract) {
+    console.error('❌ MilestoneEscrow contract not initialized');
+    return;
+  }
 
   try {
     const tx = await milestoneEscrowContract.completeMilestone(escrowId, milestoneIndex, {
@@ -743,13 +819,13 @@ async function handleMilestoneCompletion(data) {
     await tx.wait();
 
     console.log(`✅ A2A milestone completed: ${escrowId} - Milestone ${milestoneIndex}`);
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ A2A milestone completion failed:', error);
   }
 }
 
 // Start server
-async function start() {
+async function start(): Promise<void> {
   await initContracts();
   await initHCS10Connection();
 
@@ -766,5 +842,6 @@ async function start() {
 
 start().catch(console.error);
 
-module.exports = { app, AGENT_CARD };
+export { app, AGENT_CARD };
+
 

@@ -4,16 +4,16 @@
  * Based on: https://github.com/a2aproject/A2A
  */
 
-const express = require('express');
-const { ethers } = require('ethers');
-const { sendA2A, subscribe, init: initA2A } = require('../lib/a2a');
-require('dotenv').config();
+import 'dotenv/config';
+import express, { Request, Response, NextFunction } from 'express';
+import { ethers } from 'ethers';
+import { sendA2A, subscribe, init as initA2A } from '../lib/a2a';
 
 const app = express();
 app.use(express.json());
 
 // CORS middleware
-app.use((req, res, next) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -23,11 +23,54 @@ app.use((req, res, next) => {
   next();
 });
 
-const PORT = process.env.DISPUTE_AGENT_PORT || 3005;
+const PORT = parseInt(process.env.DISPUTE_AGENT_PORT || '3005', 10);
 let hcs10Initialized = false;
 
+// Type definitions
+interface AgentCard {
+  name: string;
+  version: string;
+  description: string;
+  capabilities: string[];
+  methods: Record<string, any>;
+  transport: string;
+  endpoint: string;
+  protocols: string[];
+}
+
+interface Dispute {
+  id: string;
+  escrowId: string;
+  reason: string;
+  initiator: string;
+  defendant: string;
+  status: string;
+  createdAt: number;
+  evidenceDeadline: number;
+  votingDeadline: number | null;
+  resolution: string | null;
+  onChainDisputeId: number | null;
+  resolvedAt?: number;
+  originalDisputeId?: string;
+  appellant?: string;
+  appealReason?: string;
+}
+
+interface Evidence {
+  submitter: string;
+  content: any;
+  timestamp: number;
+}
+
+interface Vote {
+  voter: string;
+  decision: string;
+  weight: number;
+  timestamp: number;
+}
+
 // A2A Agent Card - Protocol Compliance
-const AGENT_CARD = {
+const AGENT_CARD: AgentCard = {
   name: 'DisputeAgent',
   version: '1.0.0',
   description: 'A2A-compliant dispute resolution agent with weighted voting and evidence collection',
@@ -78,22 +121,22 @@ const AGENT_CARD = {
 
 // Hedera connection
 const provider = new ethers.providers.JsonRpcProvider(process.env.HEDERA_JSON_RPC_RELAY || process.env.HEDERA_RPC_URL || 'https://testnet.hashio.io/api');
-let wallet = null;
+let wallet: ethers.Wallet | null = null;
 if (process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY) {
-  wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY, provider);
+  wallet = new ethers.Wallet(process.env.HEDERA_PRIVATE_KEY || process.env.PRIVATE_KEY!, provider);
 } else {
   console.warn('[DisputeAgent] No private key found. Wallet operations will be limited.');
 }
 
 // Contract connections
-let arbitrationContract;
-let reputationContract;
-let escrowContract;
+let arbitrationContract: ethers.Contract | null = null;
+let reputationContract: ethers.Contract | null = null;
+let escrowContract: ethers.Contract | null = null;
 
 // In-memory dispute storage
-const disputes = new Map();
-const evidenceStore = new Map();
-const votes = new Map();
+const disputes = new Map<string, Dispute>();
+const evidenceStore = new Map<string, Evidence[]>();
+const votes = new Map<string, Vote[]>();
 
 // Dispute status enum
 const DisputeStatus = {
@@ -102,7 +145,7 @@ const DisputeStatus = {
   VOTING: 'voting',
   RESOLVED: 'resolved',
   APPEALED: 'appealed'
-};
+} as const;
 
 // Resolution decisions
 const Decision = {
@@ -110,11 +153,9 @@ const Decision = {
   FAVOR_WORKER: 'favor_worker',
   SPLIT: 'split',
   ESCALATE: 'escalate'
-};
+} as const;
 
-// NATS connection
-
-async function initContracts() {
+async function initContracts(): Promise<void> {
   try {
     // Arbitration contract
     const arbitrationAddress = process.env.ARBITRATION_ADDRESS;
@@ -153,65 +194,67 @@ async function initContracts() {
     }
 
     // Escrow contract
-    const escrowABI = [
-      'function releasePayment(uint256 escrowId) external',
-      'function refund(uint256 escrowId) external',
-      'function getEscrow(uint256 escrowId) external view returns (tuple(address client, address worker, uint256 amount, bool completed, bool refunded))'
-    ];
-    escrowContract = new ethers.Contract(
-      process.env.ESCROW_MANAGER_ADDRESS,
-      escrowABI,
-      wallet
-    );
+    if (process.env.ESCROW_MANAGER_ADDRESS && wallet) {
+      const escrowABI = [
+        'function releasePayment(uint256 escrowId) external',
+        'function refund(uint256 escrowId) external',
+        'function getEscrow(uint256 escrowId) external view returns (tuple(address client, address worker, uint256 amount, bool completed, bool refunded))'
+      ];
+      escrowContract = new ethers.Contract(
+        process.env.ESCROW_MANAGER_ADDRESS,
+        escrowABI,
+        wallet
+      );
+    }
 
     console.log('✅ Contracts initialized');
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Contract initialization error:', error.message);
   }
 }
 
-async function initHCS10Connection() {
+async function initHCS10Connection(): Promise<void> {
   try {
-    await initA2A(null, { agentName: 'DisputeAgent' });
+    await initA2A(undefined, { agentName: 'DisputeAgent' });
     hcs10Initialized = true;
     console.log('✅ Connected to HCS-10 network');
 
     // Subscribe to A2A channels using HCS-10
-    subscribe('aexowork.disputes', async (data) => {
+    subscribe('aexowork.disputes', async (data: any) => {
       try {
         console.log('[A2A] Dispute received:', data.disputeId);
         await handleIncomingDispute(data);
-      } catch (error) {
+      } catch (error: any) {
         console.error('[A2A] Dispute handling error:', error);
       }
     });
 
-    subscribe('aexowork.evidence', async (data) => {
+    subscribe('aexowork.evidence', async (data: any) => {
       try {
         console.log('[A2A] Evidence received:', data.disputeId);
         await handleIncomingEvidence(data);
-      } catch (error) {
+      } catch (error: any) {
         console.error('[A2A] Evidence handling error:', error);
       }
     });
 
-    subscribe('aexowork.resolution', async (data) => {
+    subscribe('aexowork.resolution', async (data: any) => {
       try {
         console.log('[A2A] Resolution request:', data.disputeId);
         await autoResolveDispute(data.disputeId);
-      } catch (error) {
+      } catch (error: any) {
         console.error('[A2A] Resolution error:', error);
       }
     });
 
     console.log('[A2A] Subscribed to dispute channels');
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ HCS-10 connection failed:', error.message);
   }
 }
 
 // A2A Protocol: Health check & Agent Card
-app.get('/', (req, res) => {
+app.get('/', (req: Request, res: Response) => {
   res.json({
     status: 'running',
     agent: 'DisputeAgent',
@@ -234,18 +277,22 @@ app.get('/', (req, res) => {
 });
 
 // A2A Protocol: Get Agent Card
-app.get('/agent-card', (req, res) => {
+app.get('/agent-card', (req: Request, res: Response) => {
   res.json(AGENT_CARD);
 });
 
 // Create dispute (A2A method: dispute.create)
-app.post(['/create-dispute', '/api/dispute/create'], async (req, res) => {
+app.post(['/create-dispute', '/api/dispute/create'], async (req: Request, res: Response) => {
   try {
     const { escrowId, reason, initiator, defendant, evidence } = req.body;
 
+    if (!arbitrationContract) {
+      return res.status(500).json({ error: 'Arbitration contract not initialized' });
+    }
+
     const disputeId = `dispute_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    const dispute = {
+    const dispute: Dispute = {
       id: disputeId,
       escrowId,
       reason,
@@ -278,11 +325,11 @@ app.post(['/create-dispute', '/api/dispute/create'], async (req, res) => {
       const receipt = await tx.wait();
       
       // Extract dispute ID from events
-      const disputeEvent = receipt.events?.find(e => e.event === 'DisputeRaised');
+      const disputeEvent = receipt.events?.find((e: any) => e.event === 'DisputeRaised');
       if (disputeEvent) {
         dispute.onChainDisputeId = disputeEvent.args.disputeId.toNumber();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('⚠️ On-chain dispute creation failed:', error.message);
     }
 
@@ -308,14 +355,14 @@ app.post(['/create-dispute', '/api/dispute/create'], async (req, res) => {
       evidenceDeadline: dispute.evidenceDeadline,
       message: 'Dispute created. Evidence collection phase started.'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error creating dispute:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Submit evidence (A2A method: dispute.submit_evidence)
-app.post(['/submit-evidence', '/api/dispute/evidence'], async (req, res) => {
+app.post(['/submit-evidence', '/api/dispute/evidence'], async (req: Request, res: Response) => {
   try {
     const { disputeId, evidence, submitter } = req.body;
 
@@ -363,14 +410,14 @@ app.post(['/submit-evidence', '/api/dispute/evidence'], async (req, res) => {
       evidenceCount: evidenceList.length,
       message: 'Evidence submitted successfully'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error submitting evidence:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Vote on dispute (A2A method: dispute.vote)
-app.post(['/vote', '/api/dispute/vote'], async (req, res) => {
+app.post(['/vote', '/api/dispute/vote'], async (req: Request, res: Response) => {
   try {
     const { disputeId, decision, voter } = req.body;
 
@@ -385,11 +432,13 @@ app.post(['/vote', '/api/dispute/vote'], async (req, res) => {
 
     // Get voter's reputation weight
     let weight = 1;
-    try {
-      const reputation = await reputationContract.getReputation(voter);
-      weight = Math.max(1, Math.floor(reputation.toNumber() / 100));
-    } catch (error) {
-      console.log('⚠️ Could not fetch reputation, using default weight');
+    if (reputationContract) {
+      try {
+        const reputation = await reputationContract.getReputation(voter);
+        weight = Math.max(1, Math.floor(reputation.toNumber() / 100));
+      } catch (error: any) {
+        console.log('⚠️ Could not fetch reputation, using default weight');
+      }
     }
 
     // Store vote
@@ -405,7 +454,7 @@ app.post(['/vote', '/api/dispute/vote'], async (req, res) => {
     console.log(`✅ Vote recorded: ${voter} -> ${decision} (weight: ${weight})`);
 
     // Check if voting should end
-    if (Date.now() > dispute.votingDeadline || voteList.length >= 5) {
+    if (dispute.votingDeadline && (Date.now() > dispute.votingDeadline || voteList.length >= 5)) {
       await autoResolveDispute(disputeId);
     }
 
@@ -416,14 +465,14 @@ app.post(['/vote', '/api/dispute/vote'], async (req, res) => {
       weight,
       totalVotes: voteList.length
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error recording vote:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Get dispute details
-app.get(['/dispute/:disputeId', '/api/dispute/:disputeId'], (req, res) => {
+app.get(['/dispute/:disputeId', '/api/dispute/:disputeId'], (req: Request, res: Response) => {
   const { disputeId } = req.params;
   const dispute = disputes.get(disputeId);
 
@@ -453,7 +502,7 @@ app.get(['/dispute/:disputeId', '/api/dispute/:disputeId'], (req, res) => {
 });
 
 // Auto-resolve dispute based on votes and evidence
-async function autoResolveDispute(disputeId) {
+async function autoResolveDispute(disputeId: string): Promise<string | undefined> {
   try {
     const dispute = disputes.get(disputeId);
     if (!dispute) {
@@ -486,7 +535,7 @@ async function autoResolveDispute(disputeId) {
     console.log(`   Votes: Client=${favorClientWeight}, Worker=${favorWorkerWeight}, Split=${splitWeight}`);
 
     // Determine resolution
-    let resolution;
+    let resolution: string;
     if (favorClientWeight > favorWorkerWeight && favorClientWeight > splitWeight) {
       resolution = Decision.FAVOR_CLIENT;
     } else if (favorWorkerWeight > favorClientWeight && favorWorkerWeight > splitWeight) {
@@ -506,15 +555,15 @@ async function autoResolveDispute(disputeId) {
     disputes.set(disputeId, dispute);
 
     // Execute on-chain resolution
-    try {
-      if (dispute.onChainDisputeId !== null) {
+    if (arbitrationContract && dispute.onChainDisputeId !== null) {
+      try {
         const favorClient = resolution === Decision.FAVOR_CLIENT;
         const tx = await arbitrationContract.resolveDispute(dispute.onChainDisputeId, favorClient);
         await tx.wait();
         console.log('   ✅ On-chain resolution executed');
+      } catch (error: any) {
+        console.error('   ⚠️ On-chain resolution failed:', error.message);
       }
-    } catch (error) {
-      console.error('   ⚠️ On-chain resolution failed:', error.message);
     }
 
     // Update reputations
@@ -531,16 +580,20 @@ async function autoResolveDispute(disputeId) {
     }
 
     return resolution;
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error resolving dispute:', error);
     throw error;
   }
 }
 
 // Update reputations based on dispute outcome
-async function updateReputationsAfterDispute(dispute, resolution) {
+async function updateReputationsAfterDispute(dispute: Dispute, resolution: string): Promise<void> {
   try {
     const { initiator, defendant } = dispute;
+
+    if (!reputationContract) {
+      return;
+    }
 
     let initiatorChange = 0;
     let defendantChange = 0;
@@ -573,7 +626,7 @@ async function updateReputationsAfterDispute(dispute, resolution) {
         const tx1 = await reputationContract.updateReputation(initiator, initiatorChange);
         await tx1.wait();
         console.log(`   ✅ Reputation updated: ${initiator} ${initiatorChange > 0 ? '+' : ''}${initiatorChange}`);
-      } catch (error) {
+      } catch (error: any) {
         console.error('   ⚠️ Failed to update initiator reputation:', error.message);
       }
     }
@@ -583,21 +636,21 @@ async function updateReputationsAfterDispute(dispute, resolution) {
         const tx2 = await reputationContract.updateReputation(defendant, defendantChange);
         await tx2.wait();
         console.log(`   ✅ Reputation updated: ${defendant} ${defendantChange > 0 ? '+' : ''}${defendantChange}`);
-      } catch (error) {
+      } catch (error: any) {
         console.error('   ⚠️ Failed to update defendant reputation:', error.message);
       }
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error updating reputations:', error);
   }
 }
 
 // Handle incoming dispute from A2A network
-async function handleIncomingDispute(data) {
-  const { disputeId, escrowId, initiator, defendant, reason } = data;
+async function handleIncomingDispute(data: any): Promise<void> {
+  const { disputeId, escrowId, initiator, defendant, reason, evidenceDeadline } = data;
   
   if (!disputes.has(disputeId)) {
-    const dispute = {
+    const dispute: Dispute = {
       id: disputeId,
       escrowId,
       reason,
@@ -605,7 +658,7 @@ async function handleIncomingDispute(data) {
       defendant,
       status: DisputeStatus.EVIDENCE_COLLECTION,
       createdAt: Date.now(),
-      evidenceDeadline: data.evidenceDeadline,
+      evidenceDeadline: evidenceDeadline || Date.now() + 86400000,
       votingDeadline: null,
       resolution: null,
       onChainDisputeId: null
@@ -618,7 +671,7 @@ async function handleIncomingDispute(data) {
 }
 
 // Handle incoming evidence from A2A network
-async function handleIncomingEvidence(data) {
+async function handleIncomingEvidence(data: any): Promise<void> {
   const { disputeId, submitter, evidence } = data;
   
   const evidenceList = evidenceStore.get(disputeId) || [];
@@ -632,7 +685,7 @@ async function handleIncomingEvidence(data) {
 }
 
 // List all disputes
-app.get(['/disputes', '/api/disputes'], (req, res) => {
+app.get(['/disputes', '/api/disputes'], (req: Request, res: Response) => {
   const allDisputes = Array.from(disputes.values()).map(d => ({
     ...d,
     evidenceCount: (evidenceStore.get(d.id) || []).length,
@@ -646,7 +699,7 @@ app.get(['/disputes', '/api/disputes'], (req, res) => {
 });
 
 // Appeal a dispute
-app.post(['/appeal', '/api/dispute/appeal'], async (req, res) => {
+app.post(['/appeal', '/api/dispute/appeal'], async (req: Request, res: Response) => {
   try {
     const { disputeId, appellant, reason } = req.body;
 
@@ -662,7 +715,7 @@ app.post(['/appeal', '/api/dispute/appeal'], async (req, res) => {
     // Create appeal (essentially a new dispute)
     const appealId = `appeal_${disputeId}_${Date.now()}`;
     
-    const appeal = {
+    const appeal: Dispute = {
       ...dispute,
       id: appealId,
       originalDisputeId: disputeId,
@@ -684,14 +737,14 @@ app.post(['/appeal', '/api/dispute/appeal'], async (req, res) => {
       appealId,
       message: 'Appeal created successfully'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error creating appeal:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Start server
-async function start() {
+async function start(): Promise<void> {
   await initContracts();
   await initHCS10Connection();
 
@@ -708,5 +761,6 @@ async function start() {
 
 start().catch(console.error);
 
-module.exports = { app, AGENT_CARD };
+export { app, AGENT_CARD };
+
 

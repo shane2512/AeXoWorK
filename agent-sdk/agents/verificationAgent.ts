@@ -1,9 +1,9 @@
-require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
-const express = require('express');
-const { signJSON } = require('../lib/signer');
-const { downloadJSON } = require('../lib/ipfs');
-const { subscribe, sendA2A, init: initA2A } = require('../lib/a2a');
-const { submitHCSMessage } = require('../lib/hedera');
+import 'dotenv/config';
+import express, { Request, Response, NextFunction } from 'express';
+import { signJSON } from '../lib/signer';
+import { downloadJSON } from '../lib/ipfs';
+import { subscribe, sendA2A, init as initA2A } from '../lib/a2a';
+import { submitHCSMessage } from '../lib/hedera';
 
 /**
  * VerificationAgent - Validates work quality and authenticity
@@ -13,7 +13,7 @@ const app = express();
 app.use(express.json());
 
 // CORS middleware
-app.use((req, res, next) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -23,14 +23,42 @@ app.use((req, res, next) => {
   next();
 });
 
+// Type definitions
+interface VerificationResult {
+  passed: boolean;
+  score: number;
+  checks: {
+    plagiarism: boolean;
+    quality: number;
+    completeness: boolean;
+    deadlineCompliance: boolean;
+  };
+  verifiedAt: number;
+  verifier?: string;
+}
+
+interface VerificationAttestation {
+  type: string;
+  escrowId: string;
+  jobId?: string;
+  deliveryCID: string;
+  passed: boolean;
+  score: number;
+  checks: any;
+  verifiedAt: number;
+  verifier?: string;
+  timestamp: number;
+  signature?: string;
+}
+
 // Store verification results
-const verificationResults = new Map();
+const verificationResults = new Map<string, VerificationAttestation>();
 
 /**
  * GET /
  * Health check and status
  */
-app.get('/', (req, res) => {
+app.get('/', (req: Request, res: Response) => {
   res.json({
     status: 'running',
     agent: 'VerificationAgent',
@@ -50,10 +78,8 @@ app.get('/', (req, res) => {
 
 /**
  * Perform verification checks on delivered work
- * @param {Object} delivery - Delivery object
- * @returns {Object} Verification result
  */
-async function performVerification(delivery) {
+async function performVerification(delivery: any): Promise<VerificationResult> {
   // Simulated verification logic
   // In production, this would include:
   // - Plagiarism checks
@@ -82,7 +108,7 @@ async function performVerification(delivery) {
 /**
  * Handle work deliveries and verify them
  */
-async function handleWorkDelivery(msg) {
+async function handleWorkDelivery(msg: any): Promise<void> {
   console.log(`[VerificationAgent] 📨 Received message:`, {
     type: msg.type,
     escrowId: msg.escrowId,
@@ -125,7 +151,7 @@ async function handleWorkDelivery(msg) {
     });
     
     // Create verification attestation
-    const attestation = {
+    const attestation: VerificationAttestation = {
       type: 'VerificationAttestation',
       escrowId,
       jobId: jobId || delivery.jobId,
@@ -140,7 +166,7 @@ async function handleWorkDelivery(msg) {
       } else {
         console.warn(`[VerificationAgent] ⚠️  AGENT_PRIVATE_KEY_BASE64 not set, skipping signature`);
       }
-    } catch (signError) {
+    } catch (signError: any) {
       console.warn(`[VerificationAgent] ⚠️  Could not sign attestation: ${signError.message}`);
     }
     
@@ -161,14 +187,14 @@ async function handleWorkDelivery(msg) {
         
         await submitHCSMessage(process.env.HCS_TOPIC_ID, proofMessage);
         console.log(`[VerificationAgent] ✅ Proof anchored to HCS topic ${process.env.HCS_TOPIC_ID}`);
-      } catch (hcsError) {
+      } catch (hcsError: any) {
         console.warn(`[VerificationAgent] ⚠️  HCS submission failed: ${hcsError.message}`);
       }
     }
     
     // Send verified delivery to ClientAgent (per user flow spec)
     // VerificationAgent verifies work, then sends verified delivery + score to ClientAgent
-    const verifiedDelivery = {
+    const verifiedDelivery: any = {
       type: 'DeliveryReceipt', // Send as DeliveryReceipt to ClientAgent
       escrowId,
       jobId: jobId || delivery.jobId,
@@ -180,29 +206,30 @@ async function handleWorkDelivery(msg) {
       fromDid: process.env.AGENT_DID,
       verifiedBy: 'VerificationAgent',
       timestamp: Date.now(),
+      to: msg.clientAccountId || process.env.CLIENT_AGENT_ACCOUNT_ID, // Target ClientAgent only
     };
     
     try {
       if (process.env.AGENT_PRIVATE_KEY_BASE64) {
         verifiedDelivery.signature = signJSON(verifiedDelivery, process.env.AGENT_PRIVATE_KEY_BASE64);
       }
-    } catch (signError) {
+    } catch (signError: any) {
       console.warn(`[VerificationAgent] ⚠️  Could not sign verified delivery: ${signError.message}`);
     }
     
-    // Send verified delivery to ClientAgent
+    // Send verified delivery to ClientAgent only
     try {
       await sendA2A('aexowork.deliveries', verifiedDelivery);
-      console.log(`[VerificationAgent] 📤 Verified delivery sent to ClientAgent (score: ${verification.score}, passed: ${verification.passed})`);
-    } catch (a2aError) {
+      console.log(`[VerificationAgent] 📤 Verified delivery sent to ClientAgent (${verifiedDelivery.to || 'broadcast'}) - score: ${verification.score}, passed: ${verification.passed}`);
+    } catch (a2aError: any) {
       console.warn(`[VerificationAgent] ⚠️  Failed to send verified delivery to ClientAgent: ${a2aError.message}`);
     }
     
-    // Also broadcast verification result for other agents (optional)
+    // Also broadcast verification result for other agents (optional - no 'to' field, so it broadcasts)
     try {
       await sendA2A('aexowork.verifications', attestation);
-      console.log(`[VerificationAgent] 📤 Verification attestation broadcasted via A2A`);
-    } catch (a2aError) {
+      console.log(`[VerificationAgent] 📤 Verification attestation broadcasted via A2A (for other agents)`);
+    } catch (a2aError: any) {
       console.warn(`[VerificationAgent] ⚠️  A2A broadcast failed: ${a2aError.message}`);
     }
     
@@ -211,7 +238,7 @@ async function handleWorkDelivery(msg) {
         verification.passed ? '✅ PASSED' : '❌ FAILED'
       } (score: ${verification.score})`
     );
-  } catch (error) {
+  } catch (error: any) {
     console.error(`[VerificationAgent] ❌ Verification error for escrow ${escrowId}:`, error.message);
     console.error(`[VerificationAgent]    Stack: ${error.stack || 'No stack trace'}`);
   }
@@ -221,7 +248,7 @@ async function handleWorkDelivery(msg) {
  * POST /verify (also /api/verification/verify)
  * Manually trigger verification for an escrow
  */
-app.post(['/verify', '/api/verification/verify'], async (req, res) => {
+app.post(['/verify', '/api/verification/verify'], async (req: Request, res: Response) => {
   try {
     const { escrowId, deliveryCID } = req.body;
     
@@ -232,7 +259,7 @@ app.post(['/verify', '/api/verification/verify'], async (req, res) => {
     const delivery = await downloadJSON(deliveryCID);
     const verification = await performVerification(delivery);
     
-    const attestation = {
+    const attestation: VerificationAttestation = {
       type: 'VerificationAttestation',
       escrowId,
       deliveryCID,
@@ -240,7 +267,7 @@ app.post(['/verify', '/api/verification/verify'], async (req, res) => {
       timestamp: Date.now(),
     };
     
-    attestation.signature = signJSON(attestation, process.env.AGENT_PRIVATE_KEY_BASE64);
+    attestation.signature = signJSON(attestation, process.env.AGENT_PRIVATE_KEY_BASE64!);
     
     verificationResults.set(escrowId, attestation);
     
@@ -248,7 +275,7 @@ app.post(['/verify', '/api/verification/verify'], async (req, res) => {
       ok: true,
       attestation,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('[VerificationAgent] Manual verification error:', error);
     res.status(500).json({ error: error.message });
   }
@@ -258,7 +285,7 @@ app.post(['/verify', '/api/verification/verify'], async (req, res) => {
  * GET /verifications
  * List all verification results
  */
-app.get('/verifications', (req, res) => {
+app.get('/verifications', (req: Request, res: Response) => {
   const results = Array.from(verificationResults.values());
   res.json({ count: results.length, results });
 });
@@ -267,7 +294,7 @@ app.get('/verifications', (req, res) => {
  * GET /verification/:escrowId
  * Get verification result for specific escrow
  */
-app.get('/verification/:escrowId', (req, res) => {
+app.get('/verification/:escrowId', (req: Request, res: Response) => {
   const { escrowId } = req.params;
   const result = verificationResults.get(escrowId);
   
@@ -281,10 +308,10 @@ app.get('/verification/:escrowId', (req, res) => {
 /**
  * Initialize VerificationAgent
  */
-async function init() {
+export async function init(): Promise<void> {
   // Connect to A2A message bus
   console.log(`[VerificationAgent] 🔌 Connecting to A2A message bus...`);
-  await initA2A(null, { agentName: 'VerificationAgent' });
+  await initA2A(undefined, { agentName: 'VerificationAgent' });
   console.log(`[VerificationAgent] ✅ Connected to A2A message bus`);
   
   // Subscribe to work deliveries (from WorkerAgent)
@@ -310,5 +337,5 @@ if (require.main === module) {
   init().catch(console.error);
 }
 
-module.exports = { app, init };
+export { app };
 
