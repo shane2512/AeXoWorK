@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Landing from './pages/Landing';
 import Dashboard from './pages/Dashboard';
 import PostJob from './pages/PostJob';
 import Marketplace from './pages/Marketplace';
@@ -9,14 +10,49 @@ import AgentDetail from './pages/AgentDetail';
 import ProviderDashboard from './components/ProviderDashboard';
 import AgentMonitor from './components/AgentMonitor';
 import JobTracker from './components/JobTracker';
-import WalletConnect from './components/WalletConnect';
+import Navigation from './components/Navigation';
 import RoleSelector from './components/RoleSelector';
+import Chat from './pages/Chat';
+import Documentation from './pages/Documentation';
+
+// Layout component for authenticated routes
+function AppLayout({ account, setAccount, userRole, setUserRole, children }) {
+  return (
+    <div className="min-h-screen bg-black text-white">
+      <Navigation account={account} setAccount={setAccount} userRole={userRole} setUserRole={setUserRole} />
+      <main className="min-h-screen bg-gradient-to-b from-black via-gray-900 to-black">
+        <div className="max-w-7xl mx-auto px-6 md:px-8 py-8">
+          {children}
+        </div>
+      </main>
+      <footer className="relative py-12 bg-black border-t border-white/10">
+        <div className="max-w-7xl mx-auto px-6 md:px-8">
+          <div className="text-center text-white/60 text-sm">
+            <p>Built on Hedera • Powered by A2A Agents • Secured by HBAR</p>
+            <p className="mt-2">© 2025 AexoWork. All rights reserved.</p>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// Protected route wrapper
+function ProtectedRoute({ userRole, setUserRole, account, setAccount, children }) {
+  if (!userRole) {
+    return <RoleSelector onRoleSelect={setUserRole} />;
+  }
+  return (
+    <AppLayout account={account} setAccount={setAccount} userRole={userRole} setUserRole={setUserRole}>
+      {children}
+    </AppLayout>
+  );
+}
 
 function App() {
   const [account, setAccount] = useState(null);
   const [userRole, setUserRole] = useState(null);
 
-  // Load role from localStorage on mount
   useEffect(() => {
     const savedRole = localStorage.getItem('userRole');
     if (savedRole) {
@@ -29,95 +65,24 @@ function App() {
     localStorage.setItem('userRole', role);
   };
 
-  // Show role selector if no role is selected
-  if (!userRole) {
-    return <RoleSelector onRoleSelect={handleRoleSelect} />;
-  }
-
   return (
     <Router>
-      <div className="min-h-screen bg-gray-50">
-        {/* Navigation */}
-        <nav className="bg-white shadow-sm border-b border-gray-200">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex justify-between h-16 items-center">
-              <div className="flex items-center space-x-8">
-                <Link to="/" className="flex items-center">
-                  <span className="text-2xl font-bold text-hedera-purple">AexoWork</span>
-                  <span className="ml-2 text-sm text-gray-500">A2A Marketplace</span>
-                </Link>
-                
-                <div className="hidden md:flex space-x-4">
-                  <Link to="/" className="text-gray-700 hover:text-hedera-purple px-3 py-2">
-                    Dashboard
-                  </Link>
-                  <Link to="/jobs" className="text-gray-700 hover:text-hedera-purple px-3 py-2">
-                    📋 {userRole === 'client' ? 'My Jobs' : 'My Work'}
-                  </Link>
-                  <Link to="/marketplace" className="text-gray-700 hover:text-hedera-purple px-3 py-2">
-                    🛒 Market
-                  </Link>
-                  <Link to="/agents" className="text-gray-700 hover:text-hedera-purple px-3 py-2">
-                    🤖 Agents
-                  </Link>
-                  {userRole === 'client' && (
-                    <Link to="/post-job" className="text-gray-700 hover:text-hedera-purple px-3 py-2">
-                      ➕ Post Job
-                    </Link>
-                  )}
-                </div>
-              </div>
-              
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center space-x-2 bg-gray-100 px-3 py-2 rounded-lg">
-                  <span className="text-sm font-medium text-gray-700">
-                    {userRole === 'client' ? '👔 Client' : '👷 Freelancer'}
-                  </span>
-                  <button
-                    onClick={() => {
-                      localStorage.removeItem('userRole');
-                      setUserRole(null);
-                    }}
-                    className="text-xs text-gray-500 hover:text-gray-700"
-                    title="Change role"
-                  >
-                    Change
-                  </button>
-                </div>
-                <WalletConnect account={account} setAccount={setAccount} />
-              </div>
-            </div>
-          </div>
-        </nav>
-
-        {/* Main Content */}
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <Routes>
-            <Route path="/" element={<Dashboard account={account} userRole={userRole} />} />
-            <Route path="/post-job" element={<PostJob account={account} userRole={userRole} />} />
-            <Route path="/marketplace" element={<Marketplace account={account} userRole={userRole} />} />
-            <Route path="/create-agent" element={<CreateAgent account={account} userRole={userRole} />} />
-            <Route path="/agent/:agentId" element={<AgentDetail account={account} userRole={userRole} />} />
-            <Route path="/job/:jobId" element={<JobDetail account={account} userRole={userRole} />} />
-            <Route path="/jobs" element={<JobTracker wallet={account} userRole={userRole} />} />
-            <Route path="/provider" element={<ProviderDashboard wallet={account} userRole={userRole} />} />
-            <Route path="/agents" element={<AgentMonitor userRole={userRole} />} />
-          </Routes>
-        </main>
-
-        {/* Footer */}
-        <footer className="bg-white border-t border-gray-200 mt-16">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-            <div className="text-center text-gray-500 text-sm">
-              <p>Built on Hedera • Powered by A2A Agents • Secured by HBAR</p>
-              <p className="mt-2">© 2025 AexoWork. All rights reserved.</p>
-            </div>
-          </div>
-        </footer>
-      </div>
+      <Routes>
+        <Route path="/" element={<Landing account={account} setAccount={setAccount} />} />
+        <Route path="/dashboard" element={<ProtectedRoute userRole={userRole} setUserRole={handleRoleSelect} account={account} setAccount={setAccount}><Dashboard account={account} userRole={userRole} /></ProtectedRoute>} />
+        <Route path="/post-job" element={<ProtectedRoute userRole={userRole} setUserRole={handleRoleSelect} account={account} setAccount={setAccount}><PostJob account={account} userRole={userRole} /></ProtectedRoute>} />
+        <Route path="/marketplace" element={<ProtectedRoute userRole={userRole} setUserRole={handleRoleSelect} account={account} setAccount={setAccount}><Marketplace account={account} userRole={userRole} /></ProtectedRoute>} />
+        <Route path="/create-agent" element={<ProtectedRoute userRole={userRole} setUserRole={handleRoleSelect} account={account} setAccount={setAccount}><CreateAgent account={account} userRole={userRole} /></ProtectedRoute>} />
+        <Route path="/agent/:agentId" element={<ProtectedRoute userRole={userRole} setUserRole={handleRoleSelect} account={account} setAccount={setAccount}><AgentDetail account={account} userRole={userRole} /></ProtectedRoute>} />
+        <Route path="/job/:jobId" element={<ProtectedRoute userRole={userRole} setUserRole={handleRoleSelect} account={account} setAccount={setAccount}><JobDetail account={account} userRole={userRole} /></ProtectedRoute>} />
+        <Route path="/jobs" element={<ProtectedRoute userRole={userRole} setUserRole={handleRoleSelect} account={account} setAccount={setAccount}><JobTracker wallet={account} userRole={userRole} /></ProtectedRoute>} />
+        <Route path="/provider" element={<ProtectedRoute userRole={userRole} setUserRole={handleRoleSelect} account={account} setAccount={setAccount}><ProviderDashboard wallet={account} userRole={userRole} /></ProtectedRoute>} />
+        <Route path="/agents" element={<ProtectedRoute userRole={userRole} setUserRole={handleRoleSelect} account={account} setAccount={setAccount}><AgentMonitor userRole={userRole} /></ProtectedRoute>} />
+        <Route path="/chat" element={<ProtectedRoute userRole={userRole} setUserRole={handleRoleSelect} account={account} setAccount={setAccount}><Chat account={account} userRole={userRole} /></ProtectedRoute>} />
+        <Route path="/docs" element={<AppLayout account={account} setAccount={setAccount} userRole={userRole} setUserRole={handleRoleSelect}><Documentation /></AppLayout>} />
+      </Routes>
     </Router>
   );
 }
 
 export default App;
-

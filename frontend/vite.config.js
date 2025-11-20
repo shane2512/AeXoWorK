@@ -31,9 +31,9 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/api\/ipfs/, '/api/ipfs'),
       },
       '/api/agents': {
-        target: 'http://localhost:3001',
+        target: 'http://localhost:3008',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/agents/, '/api/agents'),
+        rewrite: (path) => path.replace(/^\/api\/agents/, '/api/marketplace/agents'),
       },
     },
   },
