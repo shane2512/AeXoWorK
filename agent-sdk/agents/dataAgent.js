@@ -7,8 +7,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 const express = require('express');
 const { ethers } = require('ethers');
-const { sendA2A, subscribe, init: initA2A, getConnection } = require('../lib/a2a');
-const { StringCodec } = require('nats');
+const { sendA2A, subscribe, init: initA2A } = require('../lib/a2a');
 
 const app = express();
 app.use(express.json());
@@ -25,7 +24,7 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.DATA_AGENT_PORT || 3006;
-let sc = null; // Will be initialized in initNATS
+let hcs10Initialized = false;
 
 // A2A Agent Card - Protocol Compliance
 const AGENT_CARD = {
@@ -136,46 +135,34 @@ async function initContracts() {
   }
 }
 
-async function initNATS() {
+async function initHCS10Connection() {
   try {
-    await initA2A(process.env.NATS_URL || 'nats://localhost:4222');
-    nc = getConnection();
-    sc = StringCodec();
-    console.log('✅ Connected to NATS server via A2A library');
+    await initA2A(null, { agentName: 'DataAgent' });
+    hcs10Initialized = true;
+    console.log('✅ Connected to HCS-10 network');
 
-    // Subscribe to A2A channels
-    const data_requests = nc.subscribe('aexowork.data.requests');
-    const data_purchases = nc.subscribe('aexowork.data.purchases');
-
-    // Handle incoming data requests
-    (async () => {
-      for await (const msg of data_requests) {
-        try {
-          const data = JSON.parse(sc.decode(msg.data));
-          console.log('[A2A] Data request received:', data.requester);
-          await handleDataRequest(data, msg);
-        } catch (error) {
-          console.error('[A2A] Data request handling error:', error);
-        }
+    // Subscribe to A2A channels using HCS-10
+    subscribe('aexowork.data.requests', async (data) => {
+      try {
+        console.log('[A2A] Data request received:', data.requester);
+        await handleDataRequest(data);
+      } catch (error) {
+        console.error('[A2A] Data request handling error:', error);
       }
-    })();
+    });
 
-    // Handle purchase confirmations
-    (async () => {
-      for await (const msg of data_purchases) {
-        try {
-          const data = JSON.parse(sc.decode(msg.data));
-          console.log('[A2A] Purchase confirmation:', data.purchaseId);
-          await handlePurchaseConfirmation(data);
-        } catch (error) {
-          console.error('[A2A] Purchase handling error:', error);
-        }
+    subscribe('aexowork.data.purchases', async (data) => {
+      try {
+        console.log('[A2A] Purchase confirmation:', data.purchaseId);
+        await handlePurchaseConfirmation(data);
+      } catch (error) {
+        console.error('[A2A] Purchase handling error:', error);
       }
-    })();
+    });
 
     console.log('[A2A] Subscribed to data marketplace channels');
   } catch (error) {
-    console.error('❌ NATS connection failed:', error.message);
+    console.error('❌ HCS-10 connection failed:', error.message);
   }
 }
 
@@ -251,15 +238,15 @@ app.post(['/register-data', '/api/data/register'], async (req, res) => {
     listings.set(listingId, listing);
 
     // A2A: Broadcast new listing
-    if (nc) {
-      nc.publish('aexowork.data.listed', sc.encode(JSON.stringify({
+    if (hcs10Initialized) {
+      await sendA2A('aexowork.data.listed', {
         type: 'data.listed',
         listingId,
         name,
         price,
         pricingModel: model,
         provider: listing.provider
-      })));
+      });
     }
 
     console.log(`✅ Dataset registered: ${listingId} - ${name}`);
@@ -362,15 +349,15 @@ app.post(['/purchase', '/api/data/purchase'], async (req, res) => {
     accessTokens.set(purchaseId, accessToken);
 
     // A2A: Broadcast purchase
-    if (nc) {
-      nc.publish('aexowork.data.purchases', sc.encode(JSON.stringify({
+    if (hcs10Initialized) {
+      await sendA2A('aexowork.data.purchases', {
         type: 'data.purchased',
         purchaseId,
         listingId,
         buyer: purchase.buyer,
         price: listing.price,
         timestamp: Date.now()
-      })));
+      });
     }
 
     console.log(`✅ Dataset purchased: ${purchaseId} by ${purchase.buyer}`);
@@ -430,8 +417,8 @@ app.get(['/access/:purchaseId', '/api/data/access/:purchaseId'], (req, res) => {
 });
 
 // A2A: Handle data request from another agent
-async function handleDataRequest(data, msg) {
-  const { requester, requirements, maxPrice } = data;
+async function handleDataRequest(data) {
+  const { requester, requirements, maxPrice, from } = data;
 
   // Find matching datasets
   const matches = Array.from(listings.values()).filter(l => {
@@ -442,6 +429,7 @@ async function handleDataRequest(data, msg) {
   // Respond with A2A message
   const response = {
     type: 'data.response',
+    to: from || requester,
     agent: 'DataAgent',
     matches: matches.map(m => ({
       listingId: m.id,
@@ -454,11 +442,11 @@ async function handleDataRequest(data, msg) {
   };
 
   // Reply to requester
-  if (msg.reply) {
-    nc.publish(msg.reply, sc.encode(JSON.stringify(response)));
+  if ((from || requester) && hcs10Initialized) {
+    await sendA2A('aexowork.data.response', response);
   }
 
-  console.log(`✅ Sent ${matches.length} dataset matches to ${requester}`);
+  console.log(`✅ Sent ${matches.length} dataset matches to ${requester || from}`);
 }
 
 // Handle purchase confirmation
@@ -531,7 +519,7 @@ app.get(['/revenue/:provider', '/api/data/revenue/:provider'], (req, res) => {
 // Start server
 async function start() {
   await initContracts();
-  await initNATS();
+  await initHCS10Connection();
 
   app.listen(PORT, () => {
     console.log(`\n╔════════════════════════════════════════╗`);

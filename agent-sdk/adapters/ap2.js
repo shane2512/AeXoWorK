@@ -153,3 +153,9 @@ module.exports = {
   start,
 };
 
+// Auto-start server if run directly
+if (require.main === module) {
+  const port = process.env.AP2_PORT || 4100;
+  start(port);
+}
+

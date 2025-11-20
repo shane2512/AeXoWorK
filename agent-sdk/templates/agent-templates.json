@@ -32,7 +32,7 @@
         "MARKETPLACE_ADDRESS",
         "ESCROW_MANAGER_ADDRESS"
       ],
-      "natsChannels": [
+      "hcs10Channels": [
         "aexowork.offers",
         "aexowork.deliveries"
       ]
@@ -69,7 +69,7 @@
         "MARKETPLACE_ADDRESS",
         "ESCROW_MANAGER_ADDRESS"
       ],
-      "natsChannels": [
+      "hcs10Channels": [
         "aexowork.jobs",
         "aexowork.offers.accepted"
       ]
@@ -111,7 +111,7 @@
         "ESCROW_MANAGER_ADDRESS",
         "REPUTATION_MANAGER_ADDRESS"
       ],
-      "natsChannels": [
+      "hcs10Channels": [
         "aexowork.jobs",
         "aexowork.offers.accepted",
         "aexowork.reputation.updated"
@@ -150,7 +150,7 @@
         "PROOFS_ADDRESS",
         "ESCROW_MANAGER_ADDRESS"
       ],
-      "natsChannels": [
+      "hcs10Channels": [
         "aexowork.deliveries",
         "aexowork.verification.complete"
       ]
@@ -193,7 +193,7 @@
         "BADGE_NFT_ADDRESS",
         "REPUTATION_MANAGER_ADDRESS"
       ],
-      "natsChannels": [
+      "hcs10Channels": [
         "aexowork.job.complete",
         "aexowork.reputation.updated"
       ]
@@ -232,7 +232,7 @@
         "REPUTATION_MANAGER_ADDRESS",
         "ESCROW_MANAGER_ADDRESS"
       ],
-      "natsChannels": [
+      "hcs10Channels": [
         "aexowork.disputes",
         "aexowork.evidence",
         "aexowork.resolution"
@@ -268,7 +268,7 @@
       "requiredContracts": [
         "DATA_MARKETPLACE_ADDRESS"
       ],
-      "natsChannels": [
+      "hcs10Channels": [
         "aexowork.data.requests",
         "aexowork.data.purchases"
       ]
@@ -304,7 +304,7 @@
         "ESCROW_MANAGER_ADDRESS",
         "MILESTONE_ESCROW_ADDRESS"
       ],
-      "natsChannels": [
+      "hcs10Channels": [
         "aexowork.escrow.requests",
         "aexowork.verification.complete",
         "aexowork.milestone.complete"
@@ -322,7 +322,7 @@
         "Customizable capabilities",
         "Flexible configuration",
         "A2A protocol support",
-        "NATS integration",
+        "HCS-10 integration",
         "Contract integration"
       ],
       "config": {
@@ -331,7 +331,7 @@
         "customConfig": {}
       },
       "requiredContracts": [],
-      "natsChannels": []
+      "hcs10Channels": []
     }
   ],
   "categories": [

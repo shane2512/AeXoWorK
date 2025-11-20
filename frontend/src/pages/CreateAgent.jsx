@@ -1,8 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ethers } from 'ethers';
-import { registerAgentOnChain, uploadMetadataToIPFS } from '../utils/agentRegistry';
-import { ensureHederaTestnet } from '../utils/hederaNetwork';
 
 function CreateAgent({ account, userRole }) {
   const navigate = useNavigate();
@@ -82,6 +79,7 @@ function CreateAgent({ account, userRole }) {
         agentType,
         createdAt: new Date().toISOString(),
         owner: account,
+        did: formData.did,
       };
 
       if (agentType === 'client') {
@@ -94,27 +92,65 @@ function CreateAgent({ account, userRole }) {
         metadata.availability = formData.availability;
       }
 
-      // Upload metadata to IPFS
-      const metadataCID = await uploadMetadataToIPFS(metadata);
-
-      // Ensure wallet is on Hedera Testnet before registering
-      const provider = await ensureHederaTestnet();
-      const signer = provider.getSigner();
+      // Register agent with HCS-10 via MarketplaceAgent API
+      // Use import.meta.env for Vite (browser environment)
+      const MARKETPLACE_AGENT_URL = import.meta.env.VITE_MARKETPLACE_AGENT_URL || 'http://localhost:3008';
       
-      const agentTypeCode = agentType === 'client' ? 0 : 1;
-      const result = await registerAgentOnChain(
-        provider,
-        signer,
-        formData.did,
-        metadataCID,
-        agentTypeCode
-      );
+      // Include wallet address in the request
+      let response;
+      try {
+        response = await fetch(`${MARKETPLACE_AGENT_URL}/api/marketplace/register-hcs10`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: formData.name,
+            description: formData.description,
+            agentType,
+            capabilities: ['TEXT_GENERATION', 'KNOWLEDGE_RETRIEVAL'],
+            walletAddress: account, // User's connected wallet address
+            metadata
+          }),
+        });
+      } catch (fetchError) {
+        if (fetchError.message.includes('Failed to fetch') || fetchError.message.includes('ERR_CONNECTION_REFUSED')) {
+          throw new Error(
+            `Cannot connect to MarketplaceAgent at ${MARKETPLACE_AGENT_URL}. ` +
+            `Please ensure the MarketplaceAgent is running on port 3008. ` +
+            `Start it with: npm run agent:marketplace`
+          );
+        }
+        throw fetchError;
+      }
+
+      if (!response.ok) {
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          throw new Error(`Server error: ${response.status} ${response.statusText}`);
+        }
+        throw new Error(errorData.error || 'Failed to register agent with HCS-10');
+      }
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to register agent');
+      }
 
       setSuccess({
-        agentId: result.agentId,
-        txHash: result.txHash,
+        agentId: result.accountId,
+        accountId: result.accountId,
+        privateKey: result.privateKey,
+        inboundTopicId: result.inboundTopicId,
+        outboundTopicId: result.outboundTopicId,
+        profileTopicId: result.profileTopicId,
         did: formData.did,
-        metadataCID,
+        owner: result.owner || account, // User's wallet address
+        registeredBy: result.registeredBy, // Account that paid for registration
+        registryConfirmed: result.registryConfirmed,
       });
 
       setStep(3);
@@ -192,40 +228,106 @@ function CreateAgent({ account, userRole }) {
       <div className="max-w-2xl mx-auto">
         <div className="card text-center">
           <div className="text-6xl mb-4">✅</div>
-          <h2 className="text-2xl font-bold mb-4">Agent Created Successfully!</h2>
+          <h2 className="text-2xl font-bold mb-4">Agent Registered with HCS-10!</h2>
           
           <div className="bg-gray-50 rounded-lg p-6 mb-6 text-left">
             <div className="space-y-3">
               <div>
-                <span className="text-gray-600">Agent ID:</span>
+                <span className="text-gray-600 font-medium">Hedera Account ID:</span>
                 <div className="font-mono text-sm bg-white p-2 rounded mt-1 break-all">
-                  {success.agentId}
+                  {success.accountId}
                 </div>
+                <a
+                  href={`https://hashscan.io/testnet/account/${success.accountId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-hedera-blue hover:underline mt-1 inline-block"
+                >
+                  View on HashScan →
+                </a>
               </div>
               <div>
-                <span className="text-gray-600">DID:</span>
+                <span className="text-gray-600 font-medium">Private Key:</span>
+                <div className="font-mono text-xs bg-white p-2 rounded mt-1 break-all">
+                  {success.privateKey}
+                </div>
+                <p className="text-xs text-red-600 mt-1">⚠️ Save this key securely - it cannot be recovered!</p>
+              </div>
+              <div>
+                <span className="text-gray-600 font-medium">Inbound Topic ID:</span>
+                <div className="font-mono text-sm bg-white p-2 rounded mt-1 break-all">
+                  {success.inboundTopicId}
+                </div>
+                <a
+                  href={`https://hashscan.io/testnet/topic/${success.inboundTopicId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-hedera-blue hover:underline mt-1 inline-block"
+                >
+                  View on HashScan →
+                </a>
+              </div>
+              <div>
+                <span className="text-gray-600 font-medium">Outbound Topic ID:</span>
+                <div className="font-mono text-sm bg-white p-2 rounded mt-1 break-all">
+                  {success.outboundTopicId}
+                </div>
+              </div>
+              {success.profileTopicId && (
+                <div>
+                  <span className="text-gray-600 font-medium">Profile Topic ID:</span>
+                  <div className="font-mono text-sm bg-white p-2 rounded mt-1 break-all">
+                    {success.profileTopicId}
+                  </div>
+                </div>
+              )}
+              <div>
+                <span className="text-gray-600 font-medium">DID:</span>
                 <div className="font-mono text-sm bg-white p-2 rounded mt-1 break-all">
                   {success.did}
                 </div>
               </div>
               <div>
-                <span className="text-gray-600">Metadata CID:</span>
+                <span className="text-gray-600 font-medium">Owner (Your Wallet):</span>
                 <div className="font-mono text-sm bg-white p-2 rounded mt-1 break-all">
-                  {success.metadataCID}
+                  {success.owner}
                 </div>
-              </div>
-              <div>
-                <span className="text-gray-600">Transaction Hash:</span>
                 <a
-                  href={`https://hashscan.io/testnet/transaction/${success.txHash}`}
+                  href={`https://hashscan.io/testnet/account/${success.owner}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="font-mono text-sm text-hedera-blue hover:underline block mt-1 break-all"
+                  className="text-xs text-hedera-blue hover:underline mt-1 inline-block"
                 >
-                  {success.txHash}
+                  View on HashScan →
                 </a>
               </div>
+              <div className="pt-3 border-t border-gray-200">
+                <span className="text-gray-600 font-medium">Registry Status:</span>
+                <div className={`mt-1 inline-block px-3 py-1 rounded-full text-sm font-medium ${
+                  success.registryConfirmed 
+                    ? 'bg-green-100 text-green-800' 
+                    : 'bg-yellow-100 text-yellow-800'
+                }`}>
+                  {success.registryConfirmed ? '✅ Confirmed' : '⚠️ Created (Registry pending)'}
+                </div>
+              </div>
+              {success.registeredBy && (
+                <div className="pt-2">
+                  <span className="text-xs text-gray-500">
+                    Registration paid by: {success.registeredBy}
+                  </span>
+                </div>
+              )}
             </div>
+          </div>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-left">
+            <h3 className="font-medium text-blue-900 mb-2">📝 Next Steps:</h3>
+            <ol className="list-decimal list-inside space-y-1 text-sm text-blue-800">
+              <li>Save the private key securely</li>
+              <li>Add these credentials to your .env file to use the agent</li>
+              <li>Start the agent using the agent SDK</li>
+            </ol>
           </div>
 
           <div className="flex space-x-4 justify-center">

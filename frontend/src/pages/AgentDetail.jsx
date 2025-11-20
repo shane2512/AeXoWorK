@@ -251,3 +251,6 @@ function AgentDetail({ account }) {
 
 export default AgentDetail;
 
+
+
+

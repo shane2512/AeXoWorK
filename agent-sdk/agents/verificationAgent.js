@@ -166,10 +166,42 @@ async function handleWorkDelivery(msg) {
       }
     }
     
-    // Broadcast verification result
+    // Send verified delivery to ClientAgent (per user flow spec)
+    // VerificationAgent verifies work, then sends verified delivery + score to ClientAgent
+    const verifiedDelivery = {
+      type: 'DeliveryReceipt', // Send as DeliveryReceipt to ClientAgent
+      escrowId,
+      jobId: jobId || delivery.jobId,
+      deliveryCID,
+      verificationScore: verification.score,
+      verificationPassed: verification.passed,
+      verificationChecks: verification.checks,
+      verificationProofCID: null, // Could store proof on IPFS if needed
+      fromDid: process.env.AGENT_DID,
+      verifiedBy: 'VerificationAgent',
+      timestamp: Date.now(),
+    };
+    
+    try {
+      if (process.env.AGENT_PRIVATE_KEY_BASE64) {
+        verifiedDelivery.signature = signJSON(verifiedDelivery, process.env.AGENT_PRIVATE_KEY_BASE64);
+      }
+    } catch (signError) {
+      console.warn(`[VerificationAgent] ⚠️  Could not sign verified delivery: ${signError.message}`);
+    }
+    
+    // Send verified delivery to ClientAgent
+    try {
+      await sendA2A('aexowork.deliveries', verifiedDelivery);
+      console.log(`[VerificationAgent] 📤 Verified delivery sent to ClientAgent (score: ${verification.score}, passed: ${verification.passed})`);
+    } catch (a2aError) {
+      console.warn(`[VerificationAgent] ⚠️  Failed to send verified delivery to ClientAgent: ${a2aError.message}`);
+    }
+    
+    // Also broadcast verification result for other agents (optional)
     try {
       await sendA2A('aexowork.verifications', attestation);
-      console.log(`[VerificationAgent] 📤 Verification result broadcasted via A2A`);
+      console.log(`[VerificationAgent] 📤 Verification attestation broadcasted via A2A`);
     } catch (a2aError) {
       console.warn(`[VerificationAgent] ⚠️  A2A broadcast failed: ${a2aError.message}`);
     }
@@ -252,7 +284,7 @@ app.get('/verification/:escrowId', (req, res) => {
 async function init() {
   // Connect to A2A message bus
   console.log(`[VerificationAgent] 🔌 Connecting to A2A message bus...`);
-  await initA2A(process.env.NATS_URL);
+  await initA2A(null, { agentName: 'VerificationAgent' });
   console.log(`[VerificationAgent] ✅ Connected to A2A message bus`);
   
   // Subscribe to work deliveries (from WorkerAgent)

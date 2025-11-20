@@ -1,52 +1,58 @@
-node_modules
-.env*
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Environment variables and secrets
+.env
+.env.*
 .env.local
-.env.*.local
-cache
-artifacts
-coverage
-typechain
-dist
-build
-.DS_Store
-*.log
-# Documentation files
+.env.backup
+*.env
+frontend/.env.local
+
+# Documentation
 *.md
-!README.md
+docs/
+
 # Test scripts
-test-*.js
-test-*.ps1
-test-*.bat
+test*.js
 *-test.js
-*-test.ts
-check-*.js
-manual-*.js
-# Batch files
-*.bat
-*.ps1
-# Temporary files
-*.tmp
-*.temp
-*_backup
-*_old
-# IDE files
+*-test.ps1
+*-test.bat
+
+# Build artifacts
+artifacts/
+cache/
+dist/
+build/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
-# OS files
-Thumbs.db
-.DS_Store
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.env.local
-frontend/.env*.local
-# Secrets and keys
-*.key
-*.pem
-*.p12
-secrets/
-*.secret
 
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Scripts (registration, utility scripts)
+register-*.js
+check-*.js
+fund-*.js
+manual-*.js
+restart-*.bat
+start-*.bat
+stop-*.js
+
+# Relay agent (removed)
+agent-sdk/agents/relayAgent.js

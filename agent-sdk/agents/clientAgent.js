@@ -33,6 +33,9 @@ const receivedOffers = new Map();
  * Health check and status
  */
 app.get('/', (req, res) => {
+  const { getConnectionStatus } = require('../lib/hcs10');
+  const hcs10Status = getConnectionStatus();
+  
   res.json({
     status: 'running',
     agent: 'ClientAgent',
@@ -51,7 +54,8 @@ app.get('/', (req, res) => {
     contracts: {
       marketplace: process.env.MARKETPLACE_ADDRESS,
       escrowManager: process.env.ESCROW_MANAGER_ADDRESS
-    }
+    },
+    hcs10: hcs10Status
   });
 });
 
@@ -240,14 +244,19 @@ app.post(['/post-job', '/api/client/post-job'], async (req, res) => {
       }
     }
     
-    // Broadcast via A2A
+    // Broadcast via A2A (JobOfferRequest per user flow spec)
     const message = {
-      type: 'JobPost',
+      type: 'JobOfferRequest', // Updated to match user flow specification
       jobId,
       jobCID,
+      title: job.title,
+      description: job.description,
       budgetHBAR,
       requiredSkills: job.requiredSkills,
+      deadline: job.deadline,
+      verificationType: job.verificationType || 'auto', // AI verify, human verify, double-check agent
       fromDid: process.env.AGENT_DID || 'did:hedera:testnet:client',
+      clientAddress: process.env.CLIENT_ADDRESS || ethers.Wallet.createRandom().address,
       timestamp: Date.now(),
     };
     
@@ -263,10 +272,10 @@ app.post(['/post-job', '/api/client/post-job'], async (req, res) => {
     // Ensure A2A is initialized before sending
     // sendA2A will handle initialization if needed, but we can check here too
     try {
-      console.log(`[ClientAgent] Broadcasting job via A2A to aexowork.jobs...`);
+      console.log(`[ClientAgent] Broadcasting JobOfferRequest via A2A to aexowork.jobs...`);
       console.log(`[ClientAgent] Message:`, { type: message.type, jobId, requiredSkills: message.requiredSkills });
       await sendA2A('aexowork.jobs', message);
-      console.log(`[ClientAgent] ✅ Job posted and broadcasted: ${jobId}`);
+      console.log(`[ClientAgent] ✅ JobOfferRequest broadcasted: ${jobId}`);
     } catch (a2aError) {
       console.error('[ClientAgent] A2A send error:', a2aError.message);
       // Continue anyway - job is still posted locally
@@ -542,20 +551,44 @@ app.post('/approve-work', async (req, res) => {
  */
 async function init() {
   try {
-    // Connect to A2A message bus FIRST
-    console.log('[ClientAgent] Initializing A2A connection...');
-    await initA2A(process.env.NATS_URL);
-    console.log('[ClientAgent] A2A connection established');
+    // Connect to A2A message bus FIRST (now uses HCS-10)
+    console.log('[ClientAgent] Initializing HCS-10 connection...');
+    await initA2A(null, { agentName: 'ClientAgent' });
+    console.log('[ClientAgent] HCS-10 connection established');
     
-    // Subscribe to offers
+    // Subscribe to offers (OfferMessage messages)
     subscribe('aexowork.offers', async (msg) => {
-      if (msg.type === 'Offer') {
-        console.log(`[ClientAgent] Received offer for job ${msg.jobId}`);
+      console.log('[ClientAgent] ✅ Subscribed to aexowork.offers for OfferMessage messages');
+      // Support both old 'Offer' and new 'OfferMessage' types for backward compatibility
+      if (msg.type === 'Offer' || msg.type === 'OfferMessage') {
+        console.log(`[ClientAgent] 📨 Received offer for job ${msg.jobId}`);
         
         if (!receivedOffers.has(msg.jobId)) {
           receivedOffers.set(msg.jobId, []);
         }
         receivedOffers.get(msg.jobId).push(msg);
+        console.log(`[ClientAgent] ✅ Offer stored for job ${msg.jobId} (total: ${receivedOffers.get(msg.jobId).length})`);
+      }
+    });
+    
+    // Subscribe to verified deliveries from VerificationAgent (per user flow spec)
+    subscribe('aexowork.deliveries', async (msg) => {
+      if (msg.type === 'DeliveryReceipt') {
+        console.log(`[ClientAgent] 📨 Received verified delivery from VerificationAgent for escrow ${msg.escrowId}`);
+        console.log(`[ClientAgent]    Verification Score: ${msg.verificationScore || 'N/A'}`);
+        console.log(`[ClientAgent]    Verification Passed: ${msg.verificationPassed || 'N/A'}`);
+        console.log(`[ClientAgent]    Delivery CID: ${msg.deliveryCID}`);
+        
+        // Store delivery for client review
+        const job = Array.from(activeJobs.values()).find(j => j.jobId === msg.jobId);
+        if (job) {
+          job.deliveryCID = msg.deliveryCID;
+          job.verificationScore = msg.verificationScore;
+          job.verificationPassed = msg.verificationPassed;
+          job.deliveryReceivedAt = Date.now();
+          activeJobs.set(msg.jobId, job);
+          console.log(`[ClientAgent] ✅ Delivery stored for job ${msg.jobId}, ready for client approval`);
+        }
       }
     });
     

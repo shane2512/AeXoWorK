@@ -24,7 +24,7 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.DISPUTE_AGENT_PORT || 3005;
-let sc = null; // Will be initialized in initNATS
+let hcs10Initialized = false;
 
 // A2A Agent Card - Protocol Compliance
 const AGENT_CARD = {
@@ -113,7 +113,6 @@ const Decision = {
 };
 
 // NATS connection
-let nc;
 
 async function initContracts() {
   try {
@@ -171,60 +170,43 @@ async function initContracts() {
   }
 }
 
-async function initNATS() {
+async function initHCS10Connection() {
   try {
-    await initA2A(process.env.NATS_URL || 'nats://localhost:4222');
-    nc = getConnection();
-    sc = StringCodec();
-    console.log('✅ Connected to NATS server via A2A library');
+    await initA2A(null, { agentName: 'DisputeAgent' });
+    hcs10Initialized = true;
+    console.log('✅ Connected to HCS-10 network');
 
-    // Subscribe to A2A channels
-    const disputes_sub = nc.subscribe('aexowork.disputes');
-    const evidence_sub = nc.subscribe('aexowork.evidence');
-    const resolution_sub = nc.subscribe('aexowork.resolution');
-
-    // Handle incoming disputes
-    (async () => {
-      for await (const msg of disputes_sub) {
-        try {
-          const data = JSON.parse(sc.decode(msg.data));
-          console.log('[A2A] Dispute received:', data.disputeId);
-          await handleIncomingDispute(data);
-        } catch (error) {
-          console.error('[A2A] Dispute handling error:', error);
-        }
+    // Subscribe to A2A channels using HCS-10
+    subscribe('aexowork.disputes', async (data) => {
+      try {
+        console.log('[A2A] Dispute received:', data.disputeId);
+        await handleIncomingDispute(data);
+      } catch (error) {
+        console.error('[A2A] Dispute handling error:', error);
       }
-    })();
+    });
 
-    // Handle evidence submissions
-    (async () => {
-      for await (const msg of evidence_sub) {
-        try {
-          const data = JSON.parse(sc.decode(msg.data));
-          console.log('[A2A] Evidence received:', data.disputeId);
-          await handleIncomingEvidence(data);
-        } catch (error) {
-          console.error('[A2A] Evidence handling error:', error);
-        }
+    subscribe('aexowork.evidence', async (data) => {
+      try {
+        console.log('[A2A] Evidence received:', data.disputeId);
+        await handleIncomingEvidence(data);
+      } catch (error) {
+        console.error('[A2A] Evidence handling error:', error);
       }
-    })();
+    });
 
-    // Handle resolution requests
-    (async () => {
-      for await (const msg of resolution_sub) {
-        try {
-          const data = JSON.parse(sc.decode(msg.data));
-          console.log('[A2A] Resolution request:', data.disputeId);
-          await autoResolveDispute(data.disputeId);
-        } catch (error) {
-          console.error('[A2A] Resolution error:', error);
-        }
+    subscribe('aexowork.resolution', async (data) => {
+      try {
+        console.log('[A2A] Resolution request:', data.disputeId);
+        await autoResolveDispute(data.disputeId);
+      } catch (error) {
+        console.error('[A2A] Resolution error:', error);
       }
-    })();
+    });
 
     console.log('[A2A] Subscribed to dispute channels');
   } catch (error) {
-    console.error('❌ NATS connection failed:', error.message);
+    console.error('❌ HCS-10 connection failed:', error.message);
   }
 }
 
@@ -305,8 +287,8 @@ app.post(['/create-dispute', '/api/dispute/create'], async (req, res) => {
     }
 
     // A2A: Broadcast dispute creation
-    if (nc) {
-      nc.publish('aexowork.disputes', sc.encode(JSON.stringify({
+    if (hcs10Initialized) {
+      await sendA2A('aexowork.disputes', {
         type: 'dispute.created',
         disputeId,
         escrowId,
@@ -314,7 +296,7 @@ app.post(['/create-dispute', '/api/dispute/create'], async (req, res) => {
         defendant,
         reason,
         evidenceDeadline: dispute.evidenceDeadline
-      })));
+      });
     }
 
     console.log(`✅ Dispute created: ${disputeId}`);
@@ -364,13 +346,13 @@ app.post(['/submit-evidence', '/api/dispute/evidence'], async (req, res) => {
     evidenceStore.set(disputeId, evidenceList);
 
     // A2A: Broadcast evidence submission
-    if (nc) {
-      nc.publish('aexowork.evidence', sc.encode(JSON.stringify({
+    if (hcs10Initialized) {
+      await sendA2A('aexowork.evidence', {
         type: 'evidence.submitted',
         disputeId,
         submitter,
         timestamp: Date.now()
-      })));
+      });
     }
 
     console.log(`✅ Evidence submitted for dispute: ${disputeId}`);
@@ -539,13 +521,13 @@ async function autoResolveDispute(disputeId) {
     await updateReputationsAfterDispute(dispute, resolution);
 
     // A2A: Broadcast resolution
-    if (nc) {
-      nc.publish('aexowork.resolution', sc.encode(JSON.stringify({
+    if (hcs10Initialized) {
+      await sendA2A('aexowork.resolution', {
         type: 'dispute.resolved',
         disputeId,
         resolution,
         timestamp: Date.now()
-      })));
+      });
     }
 
     return resolution;
@@ -711,7 +693,7 @@ app.post(['/appeal', '/api/dispute/appeal'], async (req, res) => {
 // Start server
 async function start() {
   await initContracts();
-  await initNATS();
+  await initHCS10Connection();
 
   app.listen(PORT, () => {
     console.log(`\n╔════════════════════════════════════════╗`);

@@ -1,60 +1,47 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
-const NATS = require('nats');
+// This file now uses HCS-10 instead of NATS for backward compatibility
+const { init: initHCS10, sendA2A: sendHCS10, subscribe: subscribeHCS10, isConnected: isHCS10Connected, close: closeHCS10, getConnection: getHCS10Client } = require('./hcs10');
 
-let nc = null;
-let sc = null;
+let initialized = false;
 
 /**
- * Initialize NATS connection
- * @param {string} url - NATS server URL
+ * Initialize HCS-10 connection (replaces NATS)
+ * @param {string} url - Ignored (kept for backward compatibility)
+ * @param {Object} options - Optional agent configuration
  */
-async function init(url) {
-  if (nc && !nc.isClosed()) return;
+async function init(url, options = {}) {
+  if (initialized) return;
   
-  const natsUrl = url || process.env.NATS_URL || 'nats://localhost:4222';
   try {
-    nc = await NATS.connect({ servers: natsUrl });
-    sc = NATS.StringCodec();
-    console.log(`[A2A] ✅ Connected to NATS server: ${natsUrl}`);
+    // Try to detect agent name from calling file or use provided name
+    const agentName = options.agentName || process.env.AGENT_NAME || 'A2A Agent';
     
-    // Handle connection errors
-    nc.closed().then(() => {
-      console.log('[A2A] Connection closed');
-      nc = null;
-    }).catch(err => {
-      console.error('[A2A] Connection error:', err.message);
-      nc = null;
+    await initHCS10({
+      network: process.env.HEDERA_NETWORK || 'testnet',
+      agentName: agentName,
+      agentDescription: options.agentDescription || process.env.AGENT_DESCRIPTION || 'A2A-compliant agent using HCS-10',
+      capabilities: options.capabilities,
     });
+    initialized = true;
+    console.log(`[A2A] ✅ Connected to HCS-10 network (replacing NATS)`);
   } catch (error) {
-    console.error(`[A2A] ❌ Failed to connect to NATS: ${error.message}`);
+    console.error(`[A2A] ❌ Failed to connect to HCS-10: ${error.message}`);
     throw error;
   }
 }
 
 /**
- * Send A2A message to a subject/topic
- * @param {string} subject - The NATS subject/topic
+ * Send A2A message to a subject/topic (maps to HCS-10)
+ * @param {string} subject - The subject/topic
  * @param {Object} message - The message object to send
  */
 async function sendA2A(subject, message) {
-  if (!nc) {
+  if (!initialized) {
     await init();
   }
   
-  // Ensure connection is ready
-  if (!nc || nc.isClosed()) {
-    // Connection might be closing, wait a bit and reinit
-    await new Promise(resolve => setTimeout(resolve, 100));
-    if (!nc || nc.isClosed()) {
-      await init();
-    }
-  }
-  
   try {
-    const payload = JSON.stringify(message);
-    nc.publish(subject, sc.encode(payload));
-    console.log(`[A2A] Published to ${subject}:`, message.type || 'message');
-    console.log(`[A2A] Message details:`, { type: message.type, jobId: message.jobId || 'N/A' });
+    await sendHCS10(subject, message);
   } catch (error) {
     console.error(`[A2A] Failed to publish to ${subject}:`, error.message);
     throw error;
@@ -62,67 +49,46 @@ async function sendA2A(subject, message) {
 }
 
 /**
- * Subscribe to A2A messages on a subject
- * @param {string} subject - The NATS subject/topic
+ * Subscribe to A2A messages on a subject (maps to HCS-10)
+ * @param {string} subject - The subject/topic
  * @param {Function} handler - Async handler function (message) => {}
  */
 function subscribe(subject, handler) {
-  if (!nc) throw new Error('Not connected. Call init() first.');
+  if (!initialized) {
+    throw new Error('Not connected. Call init() first.');
+  }
   
-  const sub = nc.subscribe(subject);
-  
-  // Start processing messages (don't await - let it run in background)
-  (async () => {
-    console.log(`[A2A] Subscribed to ${subject}`);
-    try {
-      for await (const m of sub) {
-        try {
-          const data = sc.decode(m.data);
-          const msg = JSON.parse(data);
-          console.log(`[A2A] Received message on ${subject}:`, msg.type || 'message');
-          await handler(msg);
-        } catch (e) {
-          console.error(`[A2A] Handler error on ${subject}:`, e.message);
-        }
-      }
-    } catch (err) {
-      console.error(`[A2A] Subscription error on ${subject}:`, err.message);
-    }
-  })().catch(err => {
-    console.error(`[A2A] Subscription setup error on ${subject}:`, err);
-  });
-  
-  return sub;
+  subscribeHCS10(subject, handler);
 }
 
 /**
- * Close NATS connection
+ * Close HCS-10 connection
  */
 async function close() {
-  if (nc) {
-    await nc.close();
-    nc = null;
+  if (initialized) {
+    await closeHCS10();
+    initialized = false;
     console.log('[A2A] Connection closed');
   }
 }
 
 /**
- * Check if NATS connection is active
+ * Check if HCS-10 connection is active
  */
 function isConnected() {
-  try {
-    return nc !== null && nc !== undefined && !nc.isClosed();
-  } catch (e) {
-    return false;
-  }
+  return initialized && isHCS10Connected();
 }
 
 /**
- * Get NATS connection object
+ * Get HCS-10 client (replaces NATS connection object)
  */
 function getConnection() {
-  return nc;
+  return getHCS10Client();
 }
+
+// Export for backward compatibility
+let nc = null; // Deprecated - use getConnection() instead
+let sc = null; // Deprecated - not needed with HCS-10
 
 module.exports = {
   init,
@@ -131,6 +97,6 @@ module.exports = {
   close,
   isConnected,
   getConnection,
-  nc, // Export for direct access if needed
+  nc, // Deprecated - kept for backward compatibility
+  sc, // Deprecated - kept for backward compatibility
 };
-

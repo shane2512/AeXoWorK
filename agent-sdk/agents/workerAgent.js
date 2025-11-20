@@ -75,10 +75,11 @@ function shouldBidOnJob(job) {
 }
 
 /**
- * Handle incoming job postings
+ * Handle incoming job postings (JobOfferRequest per user flow spec)
  */
 async function handleJobPost(msg) {
-  if (msg.type !== 'JobPost') return;
+  // Support both old 'JobPost' and new 'JobOfferRequest' types for backward compatibility
+  if (msg.type !== 'JobPost' && msg.type !== 'JobOfferRequest') return;
   
   console.log(`[WorkerAgent] New job discovered: ${msg.jobId}`);
   
@@ -119,16 +120,26 @@ async function handleJobPost(msg) {
     dataAccess = 'requested';
   }
   
-  // Create offer
+  // Create offer (OfferMessage per user flow spec)
   const offer = {
-    type: 'Offer',
+    type: 'OfferMessage', // Updated to match user flow specification
     offerId: 'offer-' + Date.now(),
     jobId: msg.jobId,
-    priceHBAR: msg.budgetHBAR, // Match the budget for simplicity
+    price: msg.budgetHBAR, // Price in HBAR
+    priceHBAR: msg.budgetHBAR, // Keep for backward compatibility
     eta: '48h',
+    sla: {
+      deliveryTime: 48 * 60 * 60 * 1000, // 48 hours in ms
+      qualityGuarantee: true,
+      revisionPolicy: '2 free revisions'
+    },
     proposedDeadline: Date.now() + 48 * 60 * 60 * 1000,
+    reputationScore: 85, // TODO: Get from ReputeAgent
+    bundledServices: [], // Optional: e.g., ['plagiarism_check', 'ai_verification']
     fromDid: process.env.AGENT_DID,
     workerAddress: process.env.WORKER_ADDRESS || ethers.Wallet.createRandom().address,
+    agentName: 'WorkerAgent',
+    pastJobs: 0, // TODO: Get from ReputeAgent
     timestamp: Date.now(),
   };
   
@@ -415,8 +426,8 @@ async function deliverWork(escrowId) {
     work.deliveryCID = deliveryCID;
     acceptedWork.set(escrowId, work);
     
-    // STEP 6: Auto-Verify Work via VerificationAgent (A2A Protocol)
-    // WorkerAgent automatically triggers VerificationAgent to validate work
+    // STEP 6: Send deliverable to VerificationAgent FIRST (per user flow spec)
+    // WorkerAgent sends deliverable to VerificationAgent for verification BEFORE sending to ClientAgent
     const verificationRequest = {
       type: 'verification.request',
       escrowId,
@@ -424,6 +435,7 @@ async function deliverWork(escrowId) {
       deliveryCID,
       workType: work.job.requiredSkills?.[0] || 'general',
       checks: ['plagiarism', 'quality', 'deadline', 'completeness'],
+      clientAccountId: work.job.clientAddress || process.env.CLIENT_AGENT_ACCOUNT_ID, // For VerificationAgent to forward to ClientAgent
       timestamp: Date.now(),
     };
     try {
@@ -434,29 +446,10 @@ async function deliverWork(escrowId) {
       console.warn('[WorkerAgent] Could not sign verification request:', signError.message);
     }
     
-    // Send verification request to VerificationAgent via A2A
+    // Send deliverable to VerificationAgent ONLY (not to ClientAgent directly)
     await sendA2A('aexowork.verification.requests', verificationRequest);
-    
-    // Notify client via A2A
-    const message = {
-      type: 'WorkDelivered',
-      escrowId,
-      jobId: work.jobId,
-      deliveryCID,
-      verificationRequested: true,
-      fromDid: process.env.AGENT_DID,
-      timestamp: Date.now(),
-    };
-    try {
-      if (process.env.AGENT_PRIVATE_KEY_BASE64) {
-        message.signature = signJSON(message, process.env.AGENT_PRIVATE_KEY_BASE64);
-      }
-    } catch (signError) {
-      console.warn('[WorkerAgent] Could not sign delivery message:', signError.message);
-    }
-    await sendA2A('aexowork.deliveries', message);
-    
-    console.log(`[WorkerAgent] Work delivered for escrow ${escrowId}, CID: ${deliveryCID}, verification requested`);
+    console.log(`[WorkerAgent] ✅ Deliverable sent to VerificationAgent for escrow ${escrowId}, CID: ${deliveryCID}`);
+    console.log(`[WorkerAgent] ⏳ Waiting for VerificationAgent to verify and forward to ClientAgent...`);
   } catch (error) {
     console.error('[WorkerAgent] Error delivering work:', error);
   }
@@ -485,13 +478,15 @@ app.get(['/available-jobs', '/api/worker/available-jobs'], (req, res) => {
  */
 async function init() {
   // Connect to A2A message bus
-  await initA2A(process.env.NATS_URL);
+  await initA2A(null, { agentName: 'WorkerAgent' });
   
-  // Subscribe to job postings
+  // Subscribe to job postings (JobOfferRequest messages)
   subscribe('aexowork.jobs', handleJobPost);
+  console.log('[WorkerAgent] ✅ Subscribed to aexowork.jobs for JobOfferRequest messages');
   
   // Subscribe to offer acceptances
   subscribe('aexowork.offers.accepted', handleOfferAccepted);
+  console.log('[WorkerAgent] ✅ Subscribed to aexowork.offers.accepted for OfferAccepted messages');
   
   // Start HTTP server
   const port = process.env.WORKER_AGENT_PORT || 3002;

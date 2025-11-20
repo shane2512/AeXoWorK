@@ -475,7 +475,7 @@ async function init() {
   console.log('[ReputeAgent] Starting...');
 
   // Connect to A2A message bus
-  await initA2A(process.env.NATS_URL);
+  await initA2A(null, { agentName: 'ReputeAgent' });
   
   // Wait a bit for connection to stabilize
   await new Promise(resolve => setTimeout(resolve, 500));

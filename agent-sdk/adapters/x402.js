@@ -107,3 +107,9 @@ module.exports = {
   registerDelivery,
 };
 
+// Auto-start server if run directly
+if (require.main === module) {
+  const port = process.env.X402_PORT || 4000;
+  start(port);
+}
+

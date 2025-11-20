@@ -5,14 +5,13 @@
 
 const express = require('express');
 const { ethers } = require('ethers');
-const { connect, StringCodec } = require('nats');
+const { sendA2A, subscribe, init: initA2A } = require('../lib/a2a');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 
 const PORT = process.env.VERIFICATION_AGENT_PORT || 3003;
-const sc = StringCodec();
 
 // A2A Agent Card
 const AGENT_CARD = {
@@ -64,45 +63,38 @@ const VerificationType = {
 const verificationResults = new Map();
 const multiVerifierResults = new Map(); // For consensus tracking
 
-// NATS connection
-let nc;
+// HCS-10 connection
+let hcs10Initialized = false;
 
-async function initNATS() {
+async function initHCS10Connection() {
   try {
-    nc = await connect({ servers: process.env.NATS_URL || 'nats://localhost:4222' });
-    console.log('✅ Connected to NATS server');
+    await initA2A(null, { agentName: 'EnhancedVerificationAgent' });
+    hcs10Initialized = true;
+    console.log('✅ Connected to HCS-10 network');
 
     // Subscribe to verification requests
-    const verify_sub = nc.subscribe('aexowork.verification.requests');
-    const consensus_sub = nc.subscribe('aexowork.verification.consensus');
-
-    (async () => {
-      for await (const msg of verify_sub) {
-        try {
-          const data = JSON.parse(sc.decode(msg.data));
-          console.log('[A2A] Verification request:', data.escrowId);
-          await handleVerificationRequest(data, msg);
-        } catch (error) {
-          console.error('[A2A] Verification error:', error);
-        }
+    subscribe('aexowork.verification.requests', async (data) => {
+      try {
+        console.log('[A2A] Verification request:', data.escrowId);
+        await handleVerificationRequest(data);
+      } catch (error) {
+        console.error('[A2A] Verification error:', error);
       }
-    })();
+    });
 
-    (async () => {
-      for await (const msg of consensus_sub) {
-        try {
-          const data = JSON.parse(sc.decode(msg.data));
-          console.log('[A2A] Consensus request:', data.escrowId);
-          await handleConsensusRequest(data);
-        } catch (error) {
-          console.error('[A2A] Consensus error:', error);
-        }
+    // Subscribe to consensus requests
+    subscribe('aexowork.verification.consensus', async (data) => {
+      try {
+        console.log('[A2A] Consensus request:', data.escrowId);
+        await handleConsensusRequest(data);
+      } catch (error) {
+        console.error('[A2A] Consensus error:', error);
       }
-    })();
+    });
 
     console.log('[A2A] Subscribed to verification channels');
   } catch (error) {
-    console.error('❌ NATS connection failed:', error.message);
+    console.error('❌ HCS-10 connection failed:', error.message);
   }
 }
 
@@ -360,13 +352,13 @@ app.post(['/verify', '/api/verification/verify'], async (req, res) => {
     verificationResults.set(escrowId, result);
 
     // A2A: Broadcast verification result
-    if (nc) {
-      nc.publish('aexowork.verification.complete', sc.encode(JSON.stringify({
+    if (hcs10Initialized) {
+      await sendA2A('aexowork.verification.complete', {
         type: 'verification.complete',
         escrowId,
         ...result,
         timestamp: Date.now()
-      })));
+      });
     }
 
     res.json({
@@ -425,12 +417,12 @@ app.post('/verify/consensus', async (req, res) => {
     multiVerifierResults.set(escrowId, consensus);
 
     // A2A: Broadcast consensus result
-    if (nc) {
-      nc.publish('aexowork.verification.consensus', sc.encode(JSON.stringify({
+    if (hcs10Initialized) {
+      await sendA2A('aexowork.verification.consensus', {
         type: 'verification.consensus',
         ...consensus,
         timestamp: Date.now()
-      })));
+      });
     }
 
     res.json({
@@ -477,8 +469,8 @@ app.get('/consensus/:escrowId', (req, res) => {
 });
 
 // A2A: Handle verification request
-async function handleVerificationRequest(data, msg) {
-  const { escrowId, delivery, jobType } = data;
+async function handleVerificationRequest(data) {
+  const { escrowId, delivery, jobType, from } = data;
   
   try {
     const result = await performCompleteVerification(delivery, jobType);
@@ -486,12 +478,13 @@ async function handleVerificationRequest(data, msg) {
     verificationResults.set(escrowId, result);
 
     // Reply with result
-    if (msg.reply) {
-      nc.publish(msg.reply, sc.encode(JSON.stringify({
+    if (from && hcs10Initialized) {
+      await sendA2A('aexowork.verification.response', {
         type: 'verification.response',
+        to: from,
         escrowId,
         ...result
-      })));
+      });
     }
   } catch (error) {
     console.error('A2A verification error:', error);
@@ -513,14 +506,14 @@ async function handleConsensusRequest(data) {
 
 // Start server
 async function start() {
-  await initNATS();
-
+  await initHCS10Connection();
+  
   app.listen(PORT, () => {
     console.log(`\n╔════════════════════════════════════════╗`);
     console.log(`║   Enhanced VerificationAgent v2.0      ║`);
     console.log(`╚════════════════════════════════════════╝`);
     console.log(`✅ Running on port ${PORT}`);
-    console.log(`📡 A2A Protocol: v2.0`);
+    console.log(`📡 A2A Protocol: v2.0 (HCS-10)`);
     console.log(`🔗 Endpoint: http://localhost:${PORT}`);
     console.log(`🔍 Verification Types: ${Object.values(VerificationType).join(', ')}\n`);
   });
