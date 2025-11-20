@@ -62,16 +62,6 @@ function Navigation({ account, setAccount, userRole, setUserRole }) {
               >
                 {userRole === 'client' ? 'My Jobs' : 'My Work'}
               </Link>
-              <Link 
-                to="/docs" 
-                className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                  location.pathname === '/docs' 
-                    ? 'text-white bg-white/10' 
-                    : 'text-white/70 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                Docs
-              </Link>
               {userRole === 'client' && (
                 <Link 
                   to="/post-job" 
@@ -127,6 +117,16 @@ function Navigation({ account, setAccount, userRole, setUserRole }) {
               </div>
             )}
             <WalletConnect account={account} setAccount={setAccount} />
+            <Link 
+              to="/docs" 
+              className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+                location.pathname === '/docs' 
+                  ? 'text-white bg-white/10' 
+                  : 'text-white/70 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              Docs
+            </Link>
           </div>
         </div>
       </div>
