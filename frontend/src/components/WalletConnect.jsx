@@ -159,42 +159,42 @@ function WalletConnect({ account, setAccount }) {
         <button
           onClick={connectWallet}
           disabled={isConnecting}
-          className="btn-primary"
+          className="inline-flex items-center justify-center rounded-full bg-white px-4 py-2 text-sm font-semibold text-black shadow transition hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isConnecting ? 'Connecting...' : 'Connect Wallet'}
         </button>
       ) : (
-        <div className="relative flex items-center space-x-3">
+        <div className="relative">
           <div 
-            className="flex items-center space-x-2 bg-hedera-purple/10 px-3 py-2 rounded-lg cursor-pointer hover:bg-hedera-purple/20 transition-colors"
+            className="flex items-center space-x-2 bg-white/5 backdrop-blur-sm px-3 py-2 rounded-full cursor-pointer hover:bg-white/10 transition-colors border border-white/10"
             onClick={() => setShowAccountMenu(!showAccountMenu)}
           >
-            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-            <span className="text-sm font-medium">{formatAddress(account)}</span>
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            <span className="text-sm font-medium text-white">{formatAddress(account)}</span>
+            <svg className="w-4 h-4 text-white/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </div>
           
           {showAccountMenu && (
-            <div className="absolute top-full right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+            <div className="absolute top-full right-0 mt-2 w-56 bg-black/95 backdrop-blur-md rounded-xl shadow-xl border border-white/10 z-50 overflow-hidden">
               <div className="p-2">
-                <div className="px-3 py-2 text-xs text-gray-500 border-b border-gray-100">
+                <div className="px-3 py-2 text-xs text-white/50 border-b border-white/10">
                   Connected Account
                 </div>
-                <div className="px-3 py-2 text-sm font-mono">
+                <div className="px-3 py-3 text-sm font-mono text-white bg-white/5 rounded-lg mt-2">
                   {formatAddress(account)}
                 </div>
                 <button
                   onClick={switchAccount}
                   disabled={isConnecting}
-                  className="w-full mt-2 px-3 py-2 text-sm text-left hover:bg-gray-50 rounded transition-colors"
+                  className="w-full mt-2 px-3 py-2 text-sm text-left text-white/80 hover:bg-white/10 rounded-lg transition-colors disabled:opacity-50"
                 >
                   {isConnecting ? 'Switching...' : '🔄 Switch Account'}
                 </button>
                 <button
                   onClick={disconnectWallet}
-                  className="w-full mt-1 px-3 py-2 text-sm text-left text-red-600 hover:bg-red-50 rounded transition-colors"
+                  className="w-full mt-1 px-3 py-2 text-sm text-left text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
                 >
                   Disconnect
                 </button>

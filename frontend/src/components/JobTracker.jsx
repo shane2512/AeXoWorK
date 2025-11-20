@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { Link } from 'react-router-dom';
+import { PlugIcon, DocumentIcon } from './icons/Icons';
 
 const JobTracker = ({ wallet, userRole }) => {
   const [jobs, setJobs] = useState([]);
@@ -20,7 +22,6 @@ const JobTracker = ({ wallet, userRole }) => {
       setLoading(true);
       
       if (userRole === 'client') {
-        // Fetch only client's posted jobs
         try {
           const clientResponse = await axios.get(`${CLIENT_AGENT_URL}/jobs`);
           const clientJobs = (clientResponse.data.jobs || []).map(job => ({
@@ -33,7 +34,6 @@ const JobTracker = ({ wallet, userRole }) => {
           setJobs([]);
         }
       } else if (userRole === 'freelancer') {
-        // Fetch only freelancer's accepted work
         try {
           const workerResponse = await axios.get(`${WORKER_AGENT_URL}/work`);
           const workerJobs = (workerResponse.data.work || []).map(job => ({
@@ -54,21 +54,17 @@ const JobTracker = ({ wallet, userRole }) => {
     }
   };
 
-  const getStatusColor = (status) => {
-    const colors = {
-      'pending': 'bg-yellow-100 text-yellow-800',
-      'in_progress': 'bg-blue-100 text-blue-800',
-      'delivered': 'bg-purple-100 text-purple-800',
-      'completed': 'bg-green-100 text-green-800',
-      'disputed': 'bg-red-100 text-red-800'
+  const getStatusBadge = (status) => {
+    const styles = {
+      'pending': 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30',
+      'in_progress': 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
+      'delivered': 'bg-purple-500/20 text-purple-400 border border-purple-500/30',
+      'completed': 'bg-green-500/20 text-green-400 border border-green-500/30',
+      'disputed': 'bg-red-500/20 text-red-400 border border-red-500/30',
+      'open': 'bg-green-500/20 text-green-400 border border-green-500/30',
+      'assigned': 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
     };
-    return colors[status] || 'bg-gray-100 text-gray-800';
-  };
-
-  const getRoleBadge = (role) => {
-    return role === 'client' 
-      ? <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">👤 Client</span>
-      : <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded">🔧 Worker</span>;
+    return styles[status] || 'bg-white/5 text-white/60 border border-white/10';
   };
 
   const filteredJobs = filter === 'all' 
@@ -77,12 +73,15 @@ const JobTracker = ({ wallet, userRole }) => {
 
   if (!wallet) {
     return (
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8 text-center">
-          <h2 className="text-2xl font-bold text-yellow-900 mb-2">
-            🔌 Wallet Not Connected
+      <div className="max-w-7xl mx-auto">
+        <div className="card bg-yellow-500/10 border-yellow-500/30 text-center py-16">
+          <div className="mb-6 flex justify-center">
+            <PlugIcon className="w-20 h-20 text-white/60" />
+          </div>
+          <h2 className="text-2xl font-bold text-white mb-3">
+            Wallet Not Connected
           </h2>
-          <p className="text-yellow-700">
+          <p className="text-white/70 text-lg">
             Please connect your wallet to track your jobs
           </p>
         </div>
@@ -91,228 +90,104 @@ const JobTracker = ({ wallet, userRole }) => {
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-6">
+    <div className="space-y-10">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          📋 {userRole === 'client' ? 'My Posted Jobs' : 'My Work'}
+      <div>
+        <h1 className="text-4xl md:text-5xl font-bold mb-4 text-gradient">
+          <span className="flex items-center gap-2">
+            <DocumentIcon className="w-6 h-6" />
+            {userRole === 'client' ? 'My Posted Jobs' : 'My Work'}
+          </span>
         </h1>
-        <p className="text-gray-600">
+        <p className="text-lg text-white/70 leading-relaxed">
           {userRole === 'client' 
-            ? 'Track all the jobs you have posted'
-            : 'Track all the work you are doing'}
+            ? 'Track and manage all your posted jobs'
+            : 'Monitor your active and completed work'}
         </p>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white rounded-lg shadow-md p-4 border-l-4 border-blue-500">
-          <p className="text-gray-500 text-sm mb-1">Total Jobs</p>
-          <p className="text-3xl font-bold text-gray-900">{jobs.length}</p>
-        </div>
-        <div className="bg-white rounded-lg shadow-md p-4 border-l-4 border-green-500">
-          <p className="text-gray-500 text-sm mb-1">Completed</p>
-          <p className="text-3xl font-bold text-green-600">
-            {jobs.filter(j => j.status === 'completed').length}
-          </p>
-        </div>
-        <div className="bg-white rounded-lg shadow-md p-4 border-l-4 border-yellow-500">
-          <p className="text-gray-500 text-sm mb-1">In Progress</p>
-          <p className="text-3xl font-bold text-yellow-600">
-            {jobs.filter(j => j.status === 'in_progress').length}
-          </p>
-        </div>
-        <div className="bg-white rounded-lg shadow-md p-4 border-l-4 border-purple-500">
-          <p className="text-gray-500 text-sm mb-1">Pending</p>
-          <p className="text-3xl font-bold text-purple-600">
-            {jobs.filter(j => j.status === 'pending').length}
-          </p>
-        </div>
-      </div>
-
-      {/* Filters - Role Specific */}
-      <div className="bg-white rounded-lg shadow-md p-4 mb-6">
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setFilter('all')}
-            className={`px-4 py-2 rounded-md transition-colors ${
-              filter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            All
-          </button>
-          {userRole === 'client' ? (
-            <>
-              <button
-                onClick={() => setFilter('open')}
-                className={`px-4 py-2 rounded-md transition-colors ${
-                  filter === 'open' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                Open
-              </button>
-              <button
-                onClick={() => setFilter('assigned')}
-                className={`px-4 py-2 rounded-md transition-colors ${
-                  filter === 'assigned' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                Assigned
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => setFilter('in_progress')}
-                className={`px-4 py-2 rounded-md transition-colors ${
-                  filter === 'in_progress' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                In Progress
-              </button>
-              <button
-                onClick={() => setFilter('delivered')}
-                className={`px-4 py-2 rounded-md transition-colors ${
-                  filter === 'delivered' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                Delivered
-              </button>
-            </>
-          )}
-          <button
-            onClick={() => setFilter('completed')}
-            className={`px-4 py-2 rounded-md transition-colors ${
-              filter === 'completed' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-            }`}
-          >
-            Completed
-          </button>
+      {/* Filters */}
+      <div className="card">
+        <div className="flex flex-wrap items-center gap-4">
+          <span className="text-sm font-semibold text-white/90 uppercase tracking-wider">Filter:</span>
+          {['all', 'open', 'pending', 'in_progress', 'assigned', 'delivered', 'completed', 'disputed'].map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                filter === f
+                  ? 'bg-white text-black shadow-lg'
+                  : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white border border-white/10'
+              }`}
+            >
+              {f.charAt(0).toUpperCase() + f.slice(1).replace('_', ' ')}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* Jobs List */}
       {loading ? (
-        <div className="text-center py-12">
-          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-          <p className="mt-4 text-gray-600">Loading jobs...</p>
+        <div className="text-center py-16">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-white"></div>
+          <p className="mt-4 text-white/60">Loading jobs...</p>
         </div>
       ) : filteredJobs.length === 0 ? (
-        <div className="text-center py-12 bg-gray-50 rounded-lg">
-          <p className="text-gray-600 text-lg">No jobs found</p>
-          <p className="text-gray-500 mt-2">Try adjusting your filters</p>
+        <div className="card text-center py-16">
+          <div className="text-6xl mb-6">📭</div>
+          <h3 className="text-2xl font-bold mb-3 text-white">No Jobs Found</h3>
+          <p className="text-white/70 mb-8">
+            {filter === 'all'
+              ? 'No jobs yet. Get started by posting a job or accepting work!'
+              : `No ${filter} jobs at the moment.`}
+          </p>
+          {userRole === 'client' && (
+            <Link to="/post-job" className="btn-primary inline-block">
+              Post Your First Job
+            </Link>
+          )}
         </div>
       ) : (
-        <div className="space-y-4">
-          {filteredJobs.map((job, index) => (
-            <div
-              key={index}
-              className="bg-white rounded-lg shadow-md hover:shadow-lg transition-shadow p-6"
+        <div className="space-y-6">
+          {filteredJobs.map((job) => (
+            <Link
+              key={job.jobId || job.workId}
+              to={`/job/${job.jobId || job.workId}`}
+              className="card-hover block"
             >
               <div className="flex items-start justify-between mb-4">
                 <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <h3 className="text-xl font-bold text-gray-900">
-                      {job.title || job.description || 'Untitled Job'}
-                    </h3>
-                    {getRoleBadge(job.userRole)}
-                  </div>
-                  <p className="text-gray-600">
-                    {job.description || 'No description provided'}
-                  </p>
+                  <h3 className="text-xl font-bold text-white mb-2">{job.title}</h3>
+                  <p className="text-white/70 line-clamp-2 leading-relaxed">{job.description}</p>
                 </div>
-                <span className={`px-3 py-1 rounded-full text-sm font-semibold whitespace-nowrap ml-4 ${getStatusColor(job.status)}`}>
-                  {(job.status || 'pending').toUpperCase().replace('_', ' ')}
+                <span className={`px-4 py-2 rounded-full text-xs font-semibold ml-4 ${getStatusBadge(job.status)}`}>
+                  {job.status.charAt(0).toUpperCase() + job.status.slice(1).replace('_', ' ')}
                 </span>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                {job.budget && (
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-white/10">
+                {job.budgetHBAR && (
                   <div>
-                    <p className="text-gray-500">Budget</p>
-                    <p className="font-semibold text-lg">{job.budget} HBAR</p>
+                    <div className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">Budget</div>
+                    <div className="text-lg font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+                      {parseFloat(job.budgetHBAR) / 1e18} HBAR
+                    </div>
                   </div>
                 )}
-                
-                {job.worker && (
-                  <div>
-                    <p className="text-gray-500">Worker</p>
-                    <p className="font-mono text-xs truncate">{job.worker}</p>
+                <div>
+                  <div className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">Posted</div>
+                  <div className="text-sm font-semibold text-white/90">
+                    {new Date(job.createdAt).toLocaleDateString()}
                   </div>
-                )}
-
+                </div>
                 {job.deadline && (
                   <div>
-                    <p className="text-gray-500">Deadline</p>
-                    <p className="font-semibold">
-                      {new Date(job.deadline).toLocaleDateString()}
-                    </p>
-                  </div>
-                )}
-
-                {job.createdAt && (
-                  <div>
-                    <p className="text-gray-500">Created</p>
-                    <p className="font-semibold">
-                      {new Date(job.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                )}
-
-                {job.escrowId && (
-                  <div>
-                    <p className="text-gray-500">Escrow ID</p>
-                    <p className="font-mono text-xs">{job.escrowId}</p>
+                    <div className="text-xs font-semibold text-white/60 uppercase tracking-wider mb-1">Deadline</div>
+                    <div className="text-sm font-semibold text-white/90">{job.deadline}</div>
                   </div>
                 )}
               </div>
-
-              {/* Progress Timeline */}
-              {job.status && (
-                <div className="mt-4 pt-4 border-t border-gray-200">
-                  <div className="flex items-center justify-between text-xs text-gray-500">
-                    <span className={job.status === 'pending' ? 'text-blue-600 font-semibold' : ''}>
-                      Posted
-                    </span>
-                    <div className="flex-1 h-1 mx-2 bg-gray-200 rounded">
-                      <div 
-                        className="h-1 bg-blue-600 rounded transition-all"
-                        style={{ 
-                          width: job.status === 'pending' ? '25%' : 
-                                 job.status === 'in_progress' ? '50%' : 
-                                 job.status === 'delivered' ? '75%' : 
-                                 job.status === 'completed' ? '100%' : '0%'
-                        }}
-                      />
-                    </div>
-                    <span className={job.status === 'in_progress' ? 'text-blue-600 font-semibold' : ''}>
-                      In Progress
-                    </span>
-                    <div className="flex-1 h-1 mx-2 bg-gray-200 rounded">
-                      <div 
-                        className="h-1 bg-blue-600 rounded transition-all"
-                        style={{ 
-                          width: job.status === 'delivered' ? '75%' : 
-                                 job.status === 'completed' ? '100%' : '0%'
-                        }}
-                      />
-                    </div>
-                    <span className={job.status === 'delivered' ? 'text-blue-600 font-semibold' : ''}>
-                      Delivered
-                    </span>
-                    <div className="flex-1 h-1 mx-2 bg-gray-200 rounded">
-                      <div 
-                        className="h-1 bg-blue-600 rounded transition-all"
-                        style={{ width: job.status === 'completed' ? '100%' : '0%' }}
-                      />
-                    </div>
-                    <span className={job.status === 'completed' ? 'text-green-600 font-semibold' : ''}>
-                      Completed
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
+            </Link>
           ))}
         </div>
       )}
@@ -321,4 +196,3 @@ const JobTracker = ({ wallet, userRole }) => {
 };
 
 export default JobTracker;
-
