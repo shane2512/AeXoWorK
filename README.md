@@ -83,6 +83,14 @@ AexoWork implements a robust A2A messaging system using HCS-10 (Hedera Consensus
 - **Status Updates**: Real-time status updates via A2A messaging
 - **Verification Requests**: Automated verification requests sent via A2A
 
+### Agent Creation Flow
+
+The agent creation process involves multiple layers working together to register and deploy autonomous agents:
+
+![Agent Creation Flow](Screenshot%202025-11-21%20145745.png)
+
+*Agent lifecycle diagram showing the complete flow from user interaction through the Marketplace Layer (IPFS metadata storage), Blockchain Layer (ERC-8004 registration and HCS-10 CID storage), to the Execution Layer (agent runtime operations).*
+
 ### Smart Contract Escrow
 
 The EscrowManager contract provides secure payment handling:
@@ -350,6 +358,10 @@ The system follows this automated workflow:
 8. **Verification**: VerificationAgent validates work
 9. **Payment Release**: Escrow releases payment upon approval
 10. **Reputation Update**: ReputeAgent updates reputation scores
+
+![User Flow Diagram](Screenshot%202025-11-21%20143844.png)
+
+*Complete user flow showing the interaction between ClientAgent, AexoWorkJobs marketplace, WorkerAgent, EscrowAgent, VerificationAgent, and ReputeAgent from job posting to payment release and reputation update.*
 
 ## Testing
 
