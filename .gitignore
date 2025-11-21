@@ -12,6 +12,8 @@ frontend/.env.local
 
 # Documentation
 *.md
+!README.md
+!**/README.md
 docs/
 
 # Test scripts
