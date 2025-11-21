@@ -62,6 +62,52 @@ npm install @hashgraph/sdk ethers express dotenv ipfs-http-client tweetnacl
 npm install -D typescript tsx @types/node @types/express
 ```
 
+## Configuration
+
+### Contract Addresses (Hedera Testnet)
+
+The following contract addresses are deployed on Hedera testnet and can be used for development:
+
+- **AgentRegistry**: `0xCdB11f8D0Cba2b4e0fa8114Ec660bda8081E7197`
+- **EscrowManager**: `0x13a2C3aEF22555012f9251F621636Cc60c0cfbBB`
+- **ReputationManager**: `0xD296a448Af0Ba1413EECe5d52C1112e420CF3c39`
+- **Marketplace**: `0xa99366835284E3a2D47df3f0d91152c8dE91984F`
+- **Proofs**: `0xF6564fd8FAdd61F4305e7eC6a4851eA0bF30b560`
+- **Arbitration**: `0x0014954fB093ABb6eC2dC51ffEC51990615B258d`
+
+View contracts on [HashScan Testnet](https://hashscan.io/testnet).
+
+### Agent Account IDs
+
+Each agent requires a Hedera account ID. Agent account IDs follow the format `0.0.xxxxx`. 
+
+**Agent Types:**
+- ClientAgent: Manages job posting and offer acceptance
+- WorkerAgent: Discovers jobs and submits offers
+- VerificationAgent: Validates work quality
+- EscrowAgent: Manages payment escrows
+- ReputeAgent: Tracks agent reputation
+- DisputeAgent: Handles dispute resolution
+- DataAgent: Manages data marketplace
+- MarketplaceAgent: Manages marketplace operations
+
+**Setting Agent Account IDs:**
+
+Configure agent account IDs in your `.env` file:
+
+```env
+CLIENT_AGENT_ACCOUNT_ID=0.0.xxxxx
+WORKER_AGENT_ACCOUNT_ID=0.0.xxxxx
+VERIFICATION_AGENT_ACCOUNT_ID=0.0.xxxxx
+REPUTE_AGENT_ACCOUNT_ID=0.0.xxxxx
+DISPUTE_AGENT_ACCOUNT_ID=0.0.xxxxx
+DATA_AGENT_ACCOUNT_ID=0.0.xxxxx
+ESCROW_AGENT_ACCOUNT_ID=0.0.xxxxx
+MARKETPLACE_AGENT_ACCOUNT_ID=0.0.xxxxx
+```
+
+**Security Note**: Never commit private keys or sensitive credentials to version control. Always use environment variables stored in `.env` files that are excluded from git.
+
 ## Core Libraries
 
 ### A2A Messaging (`lib/a2a.ts`)
@@ -98,10 +144,11 @@ import { initEVM, getContract } from './lib/hedera';
 const { provider, signer } = initEVM();
 
 // Get contract instance
+// Note: Private key should be stored in environment variables, never hardcoded
 const escrowManager = getContract(
   process.env.ESCROW_MANAGER_ADDRESS!,
   escrowAbi,
-  privateKey
+  process.env.HEDERA_PRIVATE_KEY!
 );
 
 // Call contract method
@@ -391,9 +438,10 @@ Add to your `.env`:
 ```env
 MY_AGENT_PORT=3000
 MY_AGENT_ACCOUNT_ID=0.0.xxxxx
-MY_AGENT_PRIVATE_KEY=...
 MY_AGENT_DID=did:hedera:testnet:...
 ```
+
+**Note**: Never commit private keys to version control. Store them securely in your `.env` file which is excluded from git.
 
 ### 4. Register Agent
 
@@ -458,7 +506,9 @@ Get contract instance.
 **Parameters:**
 - `address`: Contract address
 - `abi`: Contract ABI
-- `privateKey`: Private key for signing
+- `privateKey`: Private key for signing (should come from environment variables)
+
+**Security Note**: Always use environment variables for private keys. Never hardcode or commit private keys to version control.
 
 ### IPFS Storage
 
@@ -517,7 +567,7 @@ npm run test:flow
 
 - Verify contract addresses in `.env`
 - Check account has sufficient HBAR for gas
-- Verify private key is correct
+- Verify private key is correctly set in `.env` (never hardcode)
 - Check RPC endpoint is accessible
 
 ### IPFS Upload Issues

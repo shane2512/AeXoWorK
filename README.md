@@ -181,19 +181,24 @@ Configure the following environment variables in your `.env` file:
 ```env
 HEDERA_NETWORK=testnet
 HEDERA_ACCOUNT_ID=0.0.xxxxx
-HEDERA_PRIVATE_KEY=302e020100300506032b657004220420...
 HEDERA_RPC_URL=https://testnet.hashio.io/api
 CHAIN_ID=296
 ```
+
+**Note**: Never commit your private key to version control. Store it securely in your `.env` file which is excluded from git.
 
 #### Agent Configuration
 
 ```env
 AGENT_DID=did:hedera:testnet:...
-AGENT_PRIVATE_KEY_BASE64=...
 CLIENT_AGENT_ACCOUNT_ID=0.0.xxxxx
 WORKER_AGENT_ACCOUNT_ID=0.0.xxxxx
 VERIFICATION_AGENT_ACCOUNT_ID=0.0.xxxxx
+REPUTE_AGENT_ACCOUNT_ID=0.0.xxxxx
+DISPUTE_AGENT_ACCOUNT_ID=0.0.xxxxx
+DATA_AGENT_ACCOUNT_ID=0.0.xxxxx
+ESCROW_AGENT_ACCOUNT_ID=0.0.xxxxx
+MARKETPLACE_AGENT_ACCOUNT_ID=0.0.xxxxx
 ```
 
 #### Service Configuration
@@ -205,14 +210,15 @@ PINATA_API_KEY=your_pinata_api_key
 PINATA_SECRET_KEY=your_pinata_secret_key
 ```
 
-#### Contract Addresses
+#### Contract Addresses (Hedera Testnet)
 
 ```env
-ESCROW_MANAGER_ADDRESS=0x...
-AGENT_REGISTRY_ADDRESS=0x...
-REPUTATION_MANAGER_ADDRESS=0x...
-MARKETPLACE_ADDRESS=0x...
-FEE_RECIPIENT_ADDRESS=0x...
+AGENT_REGISTRY_ADDRESS=0xCdB11f8D0Cba2b4e0fa8114Ec660bda8081E7197
+ESCROW_MANAGER_ADDRESS=0x13a2C3aEF22555012f9251F621636Cc60c0cfbBB
+REPUTATION_MANAGER_ADDRESS=0xD296a448Af0Ba1413EECe5d52C1112e420CF3c39
+MARKETPLACE_ADDRESS=0xa99366835284E3a2D47df3f0d91152c8dE91984F
+PROOFS_ADDRESS=0xF6564fd8FAdd61F4305e7eC6a4851eA0bF30b560
+ARBITRATION_ADDRESS=0x0014954fB093ABb6eC2dC51ffEC51990615B258d
 ```
 
 ### Getting Your Hedera Account
@@ -220,8 +226,8 @@ FEE_RECIPIENT_ADDRESS=0x...
 1. Visit [Hedera Portal](https://portal.hedera.com/dashboard)
 2. Create a testnet account
 3. Receive free testnet HBAR (100 HBAR)
-4. Export your account ID and private key
-5. Convert private key to ECDSA format if needed
+4. Export your account ID
+5. Store your private key securely in `.env` file (never commit to git)
 
 ## Deployment
 
@@ -236,6 +242,19 @@ npm run deploy
 ```
 
 The deployment script will output contract addresses. Add these to your `.env` file.
+
+**Pre-deployed Contract Addresses (Testnet):**
+
+If you want to use the existing deployed contracts on Hedera testnet:
+
+- **AgentRegistry**: `0xCdB11f8D0Cba2b4e0fa8114Ec660bda8081E7197`
+- **EscrowManager**: `0x13a2C3aEF22555012f9251F621636Cc60c0cfbBB`
+- **ReputationManager**: `0xD296a448Af0Ba1413EECe5d52C1112e420CF3c39`
+- **Marketplace**: `0xa99366835284E3a2D47df3f0d91152c8dE91984F`
+- **Proofs**: `0xF6564fd8FAdd61F4305e7eC6a4851eA0bF30b560`
+- **Arbitration**: `0x0014954fB093ABb6eC2dC51ffEC51990615B258d`
+
+View contracts on [HashScan Testnet](https://hashscan.io/testnet).
 
 ### 2. Register Agents
 

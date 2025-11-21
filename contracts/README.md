@@ -272,20 +272,29 @@ The deployment script (`deploy-and-update-env.js`) will:
 
 ### Contract Addresses
 
-After deployment, add addresses to `.env`:
+After deployment, add addresses to `.env`. Alternatively, use the pre-deployed contracts on Hedera testnet:
+
+**Pre-deployed Contract Addresses (Hedera Testnet):**
 
 ```env
-AGENT_REGISTRY_ADDRESS=0x...
+AGENT_REGISTRY_ADDRESS=0xCdB11f8D0Cba2b4e0fa8114Ec660bda8081E7197
+ESCROW_MANAGER_ADDRESS=0x13a2C3aEF22555012f9251F621636Cc60c0cfbBB
+REPUTATION_MANAGER_ADDRESS=0xD296a448Af0Ba1413EECe5d52C1112e420CF3c39
+MARKETPLACE_ADDRESS=0xa99366835284E3a2D47df3f0d91152c8dE91984F
+PROOFS_ADDRESS=0xF6564fd8FAdd61F4305e7eC6a4851eA0bF30b560
+ARBITRATION_ADDRESS=0x0014954fB093ABb6eC2dC51ffEC51990615B258d
+```
+
+View contracts on [HashScan Testnet](https://hashscan.io/testnet).
+
+**For custom deployments**, add your deployed addresses to `.env`:
+
+```env
 AI_AGENT_REGISTRY_ADDRESS=0x...
-ESCROW_MANAGER_ADDRESS=0x...
 MILESTONE_ESCROW_ADDRESS=0x...
-REPUTATION_MANAGER_ADDRESS=0x...
 REPUTATION_TOKEN_ADDRESS=0x...
 BADGE_NFT_ADDRESS=0x...
-MARKETPLACE_ADDRESS=0x...
 DATA_MARKETPLACE_ADDRESS=0x...
-ARBITRATION_ADDRESS=0x...
-PROOFS_ADDRESS=0x...
 ```
 
 ## Testing
