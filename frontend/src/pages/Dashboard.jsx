@@ -34,10 +34,19 @@ function Dashboard({ account, userRole }) {
           const workResponse = await axios.get(`${WORKER_AGENT_URL}/work`).catch(() => ({ data: { work: [] } }));
           const work = workResponse.data.work || [];
           
+          // Calculate total earnings from completed work
+          const completedWork = work.filter(w => w.status === 'delivered' || w.status === 'completed');
+          const totalEarnings = completedWork.reduce((sum, w) => {
+            // budgetHBAR is in wei (string), convert to HBAR
+            const budgetHBAR = w.job?.budgetHBAR || w.job?.priceHBAR || '0';
+            const amountInHBAR = parseFloat(budgetHBAR) / 1e18;
+            return sum + (isNaN(amountInHBAR) ? 0 : amountInHBAR);
+          }, 0);
+          
           setStats({
             activeJobs: work.filter(w => w.status === 'in_progress').length,
-            completedJobs: work.filter(w => w.status === 'delivered' || w.status === 'completed').length,
-            totalEarnings: 0,
+            completedJobs: completedWork.length,
+            totalEarnings: parseFloat(totalEarnings.toFixed(4)), // Round to 4 decimal places
             totalSpent: 0,
             reputation: 0,
             activeOffers: 0,
