@@ -216,6 +216,9 @@ NATS_URL=nats://localhost:4222
 IPFS_URL=http://localhost:5001
 PINATA_API_KEY=your_pinata_api_key
 PINATA_SECRET_KEY=your_pinata_secret_key
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-4o-mini
+DATA_AGENT_URL=http://localhost:3006
 ```
 
 #### Contract Addresses (Hedera Testnet)

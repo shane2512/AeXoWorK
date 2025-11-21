@@ -108,6 +108,16 @@ MARKETPLACE_AGENT_ACCOUNT_ID=0.0.xxxxx
 
 **Security Note**: Never commit private keys or sensitive credentials to version control. Always use environment variables stored in `.env` files that are excluded from git.
 
+### Service Configuration
+
+Configure additional services in your `.env` file:
+
+```env
+DATA_AGENT_URL=http://localhost:3006
+OPENAI_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-4o-mini
+```
+
 ## Core Libraries
 
 ### A2A Messaging (`lib/a2a.ts`)
@@ -280,6 +290,7 @@ Discovers jobs and submits offers for freelancers.
 - Evaluate job requirements
 - Submit competitive offers
 - Execute assigned work
+- Generate deliverables through DataAgent
 - Deliver work via x402 protocol
 
 **Endpoints:**
@@ -294,19 +305,19 @@ npm run agent:worker
 
 ### VerificationAgent
 
-Validates work quality and completeness.
+Validates work quality and completeness using advanced verification methods.
 
 **Responsibilities:**
 - Receive delivery requests
 - Download work from IPFS
-- Run quality checks
+- Run comprehensive quality checks
 - Score work (0-100)
 - Anchor proofs to HCS-10
 - Send verification results
 
 **Verification Checks:**
 - Plagiarism detection
-- Quality scoring
+- Quality scoring with detailed analysis
 - Completeness validation
 - Deadline compliance
 
@@ -362,13 +373,19 @@ npm run agent:dispute
 
 ### DataAgent
 
-Manages data marketplace interactions.
+Manages data marketplace interactions and deliverable generation.
 
 **Responsibilities:**
 - List available datasets
 - Handle data requests
 - Process data purchases
 - Deliver data access
+- Generate deliverables based on job requirements
+
+**Endpoints:**
+- `POST /generate-deliverable` - Generate deliverable for job
+- `GET /datasets` - List available datasets
+- `POST /purchase` - Purchase dataset access
 
 **Start:**
 ```bash

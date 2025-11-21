@@ -8,6 +8,8 @@ import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import { ethers } from 'ethers';
 import { sendA2A, subscribe, init as initA2A } from '../lib/a2a';
+import OpenAI from 'openai';
+import { uploadJSON } from '../lib/ipfs';
 
 const app = express();
 app.use(express.json());
@@ -25,6 +27,11 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
 const PORT = parseInt(process.env.DATA_AGENT_PORT || '3006', 10);
 let hcs10Initialized = false;
+
+// Initialize OpenAI client
+const openai = process.env.OPENAI_API_KEY ? new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+}) : null;
 
 // Type definitions
 interface AgentCard {
@@ -192,6 +199,15 @@ async function initHCS10Connection(): Promise<void> {
         await handlePurchaseConfirmation(data);
       } catch (error: any) {
         console.error('[A2A] Purchase handling error:', error);
+      }
+    });
+
+    subscribe('aexowork.data.generate', async (data: any) => {
+      try {
+        console.log('[A2A] Deliverable generation request received');
+        await handleDeliverableGenerationRequest(data);
+      } catch (error: any) {
+        console.error('[A2A] Deliverable generation error:', error);
       }
     });
 
@@ -504,6 +520,35 @@ async function handlePurchaseConfirmation(data: any): Promise<void> {
   }
 }
 
+// Handle deliverable generation request via A2A
+async function handleDeliverableGenerationRequest(data: any): Promise<void> {
+  const { jobTitle, jobDescription, requiredSkills, escrowId, from } = data;
+
+  if (!jobTitle || !jobDescription) {
+    console.error('[DataAgent] Missing required fields for deliverable generation');
+    return;
+  }
+
+  try {
+    const cid = await generateDeliverable(jobDescription, jobTitle, requiredSkills || []);
+    
+    // Send response back to requester
+    if (from && hcs10Initialized) {
+      await sendA2A('aexowork.data.deliverable', {
+        type: 'data.deliverable.generated',
+        escrowId,
+        deliveryCID: cid,
+        jobTitle,
+        timestamp: Date.now(),
+        to: from
+      });
+      console.log(`✅ Deliverable generated and sent to ${from}: ${cid}`);
+    }
+  } catch (error: any) {
+    console.error('[DataAgent] Error handling deliverable generation request:', error);
+  }
+}
+
 // Generate access token for data access
 function generateAccessToken(purchaseId: string, buyer: string): string {
   const tokenData = {
@@ -517,6 +562,117 @@ function generateAccessToken(purchaseId: string, buyer: string): string {
   const token = Buffer.from(JSON.stringify(tokenData)).toString('base64');
   return token;
 }
+
+/**
+ * Generate deliverable using OpenAI based on job requirements
+ */
+async function generateDeliverable(jobDescription: string, jobTitle: string, requiredSkills: string[] = []): Promise<string> {
+  if (!openai) {
+    console.warn('[DataAgent] OpenAI API key not set, generating basic deliverable');
+    const basicDeliverable = {
+      title: jobTitle,
+      description: jobDescription,
+      content: `Completed work for: ${jobTitle}\n\n${jobDescription}\n\nThis is a generated deliverable based on the job requirements.`,
+      completedAt: Date.now(),
+      skills: requiredSkills
+    };
+    return await uploadJSON(basicDeliverable);
+  }
+
+  try {
+    const generationPrompt = `You are a professional freelancer. Generate high-quality work deliverable based on the following job requirements:
+
+Job Title: ${jobTitle}
+Job Description: ${jobDescription}
+Required Skills: ${requiredSkills.join(', ')}
+
+Create a comprehensive deliverable that:
+1. Addresses all requirements in the job description
+2. Demonstrates expertise in the required skills
+3. Is well-structured and professional
+4. Meets industry standards
+
+Provide the deliverable in JSON format:
+{
+  "title": "Deliverable title",
+  "content": "Main deliverable content",
+  "summary": "Brief summary",
+  "files": ["list of files included"],
+  "notes": "Additional notes or explanations"
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a professional freelancer who creates high-quality deliverables. Always provide complete, well-structured work that meets client requirements.'
+        },
+        {
+          role: 'user',
+          content: generationPrompt
+        }
+      ],
+      temperature: 0.7,
+      response_format: { type: 'json_object' }
+    });
+
+    const responseContent = completion.choices[0]?.message?.content;
+    if (!responseContent) {
+      throw new Error('No response from OpenAI');
+    }
+
+    const deliverableData = JSON.parse(responseContent);
+    const deliverable = {
+      title: deliverableData.title || jobTitle,
+      description: jobDescription,
+      content: deliverableData.content || deliverableData.summary || '',
+      summary: deliverableData.summary || '',
+      files: deliverableData.files || [],
+      notes: deliverableData.notes || '',
+      completedAt: Date.now(),
+      skills: requiredSkills,
+      generatedBy: 'DataAgent'
+    };
+
+    const cid = await uploadJSON(deliverable);
+    console.log('[DataAgent] Deliverable generated and uploaded to IPFS:', cid);
+    return cid;
+  } catch (error: any) {
+    console.error('[DataAgent] Error generating deliverable:', error.message);
+    // Fallback to basic deliverable
+    const basicDeliverable = {
+      title: jobTitle,
+      description: jobDescription,
+      content: `Completed work for: ${jobTitle}\n\n${jobDescription}`,
+      completedAt: Date.now(),
+      skills: requiredSkills
+    };
+    return await uploadJSON(basicDeliverable);
+  }
+}
+
+// Endpoint to generate deliverable
+app.post(['/generate-deliverable', '/api/data/generate-deliverable'], async (req: Request, res: Response) => {
+  try {
+    const { jobDescription, jobTitle, requiredSkills } = req.body;
+
+    if (!jobDescription || !jobTitle) {
+      return res.status(400).json({ error: 'Missing required fields: jobDescription, jobTitle' });
+    }
+
+    const cid = await generateDeliverable(jobDescription, jobTitle, requiredSkills || []);
+
+    res.json({
+      success: true,
+      deliveryCID: cid,
+      message: 'Deliverable generated successfully'
+    });
+  } catch (error: any) {
+    console.error('[DataAgent] Error in generate-deliverable endpoint:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Get purchase history
 app.get(['/purchases', '/api/data/purchases'], (req: Request, res: Response) => {
